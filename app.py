@@ -239,12 +239,38 @@ class Scenepackie:
 
         threading.Thread(target=work, daemon=True).start()
 
+    def clear_scans(self):
+        if self.working:
+            return
+        if not messagebox.askyesno("Clear saved scans", "Delete saved scan results? Your movies and exported clips will not be touched."):
+            return
+        try:
+            count, _ = clear_saved_scans()
+            self.saved_matches = {}
+            messagebox.showinfo("Saved scans cleared", f"Removed {count} saved scan(s).")
+        except OSError as exc:
+            messagebox.showerror("Couldn't clear scans", str(exc))
+
+    def _save_safely(self, fn):
+        try:
+            fn()
+        except (OSError, ValueError, TypeError):
+            self.status.configure(text="Finished, but couldn't save the scan")
+
     def discover(self):
+        cached = read_snapshot(self.source)
+        if cached is not None:
+            self.groups, self.saved_matches = cached
+            self.show_faces()
+            self.status.configure(text="Loaded saved scan")
+            return
         self._job(lambda cancel, report: FaceScanner().discover(self.source, cancel, report), self._found,
                   "Finding characters", "Scanning faces throughout your video. Longer movies can take a while, but the timer will keep running.")
 
     def _found(self, groups):
         self.groups = groups
+        self.saved_matches = {}
+        self._save_safely(lambda: save_characters(self.source, groups))
         self.show_faces()
 
     def show_faces(self):
