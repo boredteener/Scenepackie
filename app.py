@@ -49,6 +49,7 @@ class Scenepackie:
         self.make_zip = tk.BooleanVar(value=True)
         self.preview_process = None
         self.clip_vars = []
+        self.saved_matches = {}
         self._theme()
         self._layout()
         self.show_upload()
@@ -127,6 +128,7 @@ class Scenepackie:
             self._label(box, Path(self.source).name, color=BROWN, size=12, bold=True, wraplength=650, justify="left").pack(anchor="w", pady=(0, 14))
             self._button(box, "Find characters   →", self.discover).pack(anchor="w")
         self._label(box, "No account, uploads, or subscriptions needed.", color=MUTED, size=10).pack(anchor="w", pady=(28, 0))
+        self._button(box, "Clear saved scans", self.clear_scans, primary=False, padx=12, pady=7).pack(anchor="w", pady=(12, 0))
 
     def pick_video(self):
         path = filedialog.askopenfilename(title="Choose a video", filetypes=[("Video files", "*.mp4 *.mkv *.mov *.avi *.m4v *.webm"), ("All files", "*.*")])
@@ -140,6 +142,7 @@ class Scenepackie:
         self.source = path
         self.groups = []
         self.clips = []
+        self.saved_matches = {}
         self.show_upload()
 
     def _show_processing(self, title, description):
