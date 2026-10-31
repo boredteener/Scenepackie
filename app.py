@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from io import BytesIO
 from pathlib import Path
+import subprocess
 from queue import Empty, Queue
 import threading
 import time
@@ -11,7 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageTk
 
-from scenepackie.core import Cancelled, FaceGroup, FaceScanner, Clip, clock, export_clips, video_info
+from scenepackie.core import Cancelled, FaceGroup, FaceScanner, Clip, binary, creation_flags, clock, export_clips, video_info
 from scenepackie.progress import estimate_remaining
 
 
@@ -45,6 +46,8 @@ class Scenepackie:
         self.return_page = "upload"
         self.photos: list[ImageTk.PhotoImage] = []
         self.make_zip = tk.BooleanVar(value=True)
+        self.preview_process = None
+        self.clip_vars = []
         self._theme()
         self._layout()
         self.show_upload()
@@ -97,6 +100,7 @@ class Scenepackie:
             label.configure(fg=BROWN if i == index else MUTED)
 
     def _clear(self):
+        self._stop_preview()
         self.photos.clear()
         for widget in self.body.winfo_children():
             widget.destroy()
@@ -280,6 +284,39 @@ class Scenepackie:
         self.clips = clips
         self.show_clips()
 
+    def _stop_preview(self):
+        player = self.preview_process
+        self.preview_process = None
+        if player is not None and player.poll() is None:
+            player.terminate()
+
+    def preview_clip(self, clip):
+        """Open a native playback window with sound at the selected timestamps."""
+        self._stop_preview()
+        if clip.duration <= 0:
+            return
+        try:
+            self.preview_process = subprocess.Popen(
+                [binary("ffplay"), "-loglevel", "error", "-autoexit",
+                 "-window_title", "scenepackie · clip preview",
+                 "-ss", f"{clip.start:.3f}", "-t", f"{clip.duration:.3f}",
+                 "-i", self.source],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=creation_flags())
+        except OSError as exc:
+            messagebox.showerror("Couldn't preview clip", f"Preview playback could not start.\\n\\n{exc}")
+
+    def set_all_clips(self, keep):
+        for clip, var in zip(self.clips, self.clip_vars):
+            clip.keep = keep
+            var.set(keep)
+        self._update_selected()
+
+    def _update_selected(self):
+        count = sum(clip.keep for clip in self.clips)
+        if hasattr(self, "selected_label") and self.selected_label.winfo_exists():
+            self.selected_label.configure(text=f"{count} of {len(self.clips)} clips selected")
+
     def show_clips(self):
         self.page = "clips"
         self._set_step(2)
@@ -291,6 +328,13 @@ class Scenepackie:
             self._label(box, "No matches found. Try another face from the character list.", color=MUTED).pack(anchor="w", pady=15)
             self._button(box, "Back to characters", self.show_faces, primary=False).pack(anchor="w")
             return
+        tools = tk.Frame(box, bg=PAPER)
+        tools.pack(fill="x", pady=(0, 10))
+        self.selected_label = self._label(tools, "", size=10, color=MUTED)
+        self.selected_label.pack(side="left")
+        self._button(tools, "Deselect all", lambda: self.set_all_clips(False), primary=False, padx=10, pady=5).pack(side="right")
+        self._button(tools, "Select all", lambda: self.set_all_clips(True), primary=False, padx=10, pady=5).pack(side="right", padx=(0, 8))
+        self.clip_vars = []
         listing = tk.Frame(box, bg=PAPER)
         listing.pack(fill="both", expand=True)
         canvas = tk.Canvas(listing, bg=PAPER, highlightthickness=0)
@@ -304,15 +348,19 @@ class Scenepackie:
         canvas.pack(side="left", fill="both", expand=True)
         for i, clip in enumerate(self.clips, 1):
             var = tk.BooleanVar(value=clip.keep)
+            self.clip_vars.append(var)
             def change(value=var, item=clip):
                 item.keep = value.get()
+                self._update_selected()
             row = tk.Frame(inner, bg=CREAM if i % 2 else PAPER, padx=10, pady=9)
             row.pack(fill="x", pady=(0, 2))
             tk.Checkbutton(row, text=f"Clip {i:03d}", variable=var, command=change, bg=row.cget("bg"), fg=DARK, activebackground=row.cget("bg"), font=("Segoe UI", 10, "bold"), selectcolor=PAPER).pack(side="left")
+            self._button(row, "▶ Preview", lambda item=clip: self.preview_clip(item), primary=False, padx=9, pady=5).pack(side="right", padx=(10, 0))
             self._label(row, f"{clock(clip.start)}  –  {clock(clip.end)}     ({int(clip.duration)}s)", color=MUTED, size=10).pack(side="right")
+        self._update_selected()
         controls = tk.Frame(box, bg=PAPER)
         controls.pack(fill="x", pady=(16, 0))
-        tk.Checkbutton(controls, text="Also make a ZIP file", variable=self.make_zip, bg=PAPER, fg=DARK, activebackground=PAPER, selectcolor=PAPER, font=("Segoe UI", 10)).pack(side="left")
+        tk.Checkbutton(controls, text="ZIP everything (individual clips + full scenepack)", variable=self.make_zip, bg=PAPER, fg=DARK, activebackground=PAPER, selectcolor=PAPER, font=("Segoe UI", 10)).pack(side="left")
         self._button(controls, "Export clips   →", self.export).pack(side="right")
         self._button(controls, "Back", self.show_faces, primary=False, padx=15).pack(side="right", padx=(0, 10))
 
