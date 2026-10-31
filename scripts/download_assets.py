@@ -2,6 +2,7 @@
 from pathlib import Path
 from urllib.request import Request, urlopen
 import shutil
+import sys
 import tempfile
 import zipfile
 
@@ -30,6 +31,10 @@ def main():
         minimum = 10_000_000 if "recognition" in name else 100_000
         if target.stat().st_size < minimum or target.read_bytes()[:20].startswith(b"version https://git"):
             raise RuntimeError(f"Model download incomplete: {name}")
+
+    if sys.platform != "win32":
+        print("Mac uses bundled imageio-ffmpeg; no separate media tools needed.", flush=True)
+        return
 
     TOOLS.mkdir(parents=True, exist_ok=True)
     # ffplay supplies video + audio previews without a VLC/Python installation.
