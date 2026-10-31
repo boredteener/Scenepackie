@@ -1,0 +1,51 @@
+name: Mac v0.4 compatibility build
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/mac-v0.4-fix.yml'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  mac:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            label: Mac-Apple-Silicon
+          - os: macos-15-intel
+            label: Mac-Intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install -r requirements.txt pyinstaller==6.16.0 imageio-ffmpeg==0.6.0
+      - run: python -m unittest discover -s tests -v
+      - run: python scripts/download_assets.py
+      - run: python scripts/build_icons.py
+      - name: Package Mac
+        run: |
+          pyinstaller --noconfirm --clean --onedir --windowed --name Scenepackie --icon build_icons/Scenepackie.icns --add-data "build_icons/icon.png:assets" --collect-all imageio_ffmpeg --add-data "models:models" app.py
+          ditto -c -k --keepParent dist/Scenepackie.app "Scenepackie-v0.4-${{ matrix.label }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Scenepackie-v0.4-${{ matrix.label }}
+          path: Scenepackie-v0.4-${{ matrix.label }}.zip
+  publish:
+    needs: mac
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Scenepackie-v0.4-Mac-*
+          path: packages
+          merge-multiple: true
+      - name: Replace Mac downloads on existing v0.4 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload v0.4 packages/*.zip --clobber --repo "${GITHUB_REPOSITORY}"
