@@ -14,6 +14,7 @@ from PIL import Image, ImageTk
 
 from scenepackie.core import Cancelled, FaceGroup, FaceScanner, Clip, binary, creation_flags, clock, export_clips, video_info
 from scenepackie.progress import estimate_remaining
+from scenepackie.cache import read_snapshot, save_characters, save_clips, clear_saved_scans
 
 
 CREAM = "#F8F5EF"
