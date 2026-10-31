@@ -6,6 +6,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/release-v0.4.yml'
+      - 'scripts/build_icons.py'
 
 permissions:
   contents: write
@@ -35,17 +36,19 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Download face models and Windows tools
         run: python scripts/download_assets.py
+      - name: Generate desktop app icons
+        run: python scripts/build_icons.py
       - name: Package Windows
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --onedir --windowed --name Scenepackie --add-data "models;models" --add-binary "bin/ffmpeg.exe;bin" --add-binary "bin/ffprobe.exe;bin" --add-binary "bin/ffplay.exe;bin" app.py
+          pyinstaller --noconfirm --clean --onedir --windowed --name Scenepackie --icon "build_icons/Scenepackie.ico" --add-data "build_icons/icon.png;assets" --add-data "models;models" --add-binary "bin/ffmpeg.exe;bin" --add-binary "bin/ffprobe.exe;bin" --add-binary "bin/ffplay.exe;bin" app.py
           Compress-Archive -Path dist/Scenepackie -DestinationPath Scenepackie-v0.4-Windows.zip -Force
       - name: Package Mac
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          pyinstaller --noconfirm --clean --onedir --windowed --name Scenepackie --collect-all imageio_ffmpeg --add-data "models:models" app.py
+          pyinstaller --noconfirm --clean --onedir --windowed --name Scenepackie --icon build_icons/Scenepackie.icns --add-data "build_icons/icon.png:assets" --collect-all imageio_ffmpeg --add-data "models:models" app.py
           ditto -c -k --keepParent dist/Scenepackie.app "Scenepackie-v0.4-${{ matrix.platform }}.zip"
       - name: Upload build
         uses: actions/upload-artifact@v4
@@ -69,4 +72,4 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create v0.4 packages/*.zip --title "Scenepackie 0.4" --notes-file RELEASE_NOTES.md --latest --target "${GITHUB_SHA}"
+          gh release upload v0.4 packages/*.zip --clobber
