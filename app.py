@@ -5,12 +5,14 @@ from io import BytesIO
 from pathlib import Path
 from queue import Empty, Queue
 import threading
+import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageTk
 
 from scenepackie.core import Cancelled, FaceGroup, FaceScanner, Clip, clock, export_clips, video_info
+from scenepackie.progress import estimate_remaining
 
 
 CREAM = "#F8F5EF"
@@ -37,6 +39,10 @@ class Scenepackie:
         self.queue: Queue = Queue()
         self.cancel = threading.Event()
         self.working = False
+        self.job_started = 0.0
+        self.job_fraction = 0.0
+        self.job_stage = ""
+        self.return_page = "upload"
         self.photos: list[ImageTk.PhotoImage] = []
         self.make_zip = tk.BooleanVar(value=True)
         self._theme()
@@ -85,10 +91,6 @@ class Scenepackie:
         footer.pack(fill="x")
         self.status = self._label(footer, "ready when you are", color=MUTED, size=10)
         self.status.pack(side="left")
-        self.progress = ttk.Progressbar(footer, style="Warm.Horizontal.TProgressbar", mode="determinate", maximum=100, length=185)
-        self.progress.pack(side="right", pady=4)
-        self.progress.pack_forget()
-        self.cancel_button = self._button(footer, "Cancel", self.cancel.set, primary=False)
 
     def _set_step(self, index):
         for i, label in enumerate(self.step_labels):
@@ -135,15 +137,85 @@ class Scenepackie:
         self.clips = []
         self.show_upload()
 
-    def _job(self, task, callback):
+    def _show_processing(self, title, description):
+        """Replace the previous action screen so scans cannot be started twice."""
+        self.page = "processing"
+        self._clear()
+        box = self._panel(39)
+        self._label(box, "working on your video", size=23, bold=True).pack(anchor="w")
+        self._label(box, description, size=11, color=MUTED, wraplength=630, justify="left").pack(anchor="w", pady=(7, 27))
+
+        summary = tk.Frame(box, bg=CREAM, padx=24, pady=23, highlightbackground=LINE, highlightthickness=1)
+        summary.pack(fill="x")
+        top = tk.Frame(summary, bg=CREAM)
+        top.pack(fill="x")
+        self.stage_label = self._label(top, title, size=13, color=BROWN, bold=True)
+        self.stage_label.pack(side="left", anchor="s")
+        self.percent_label = self._label(top, "0%", size=22, color=DARK, bold=True)
+        self.percent_label.pack(side="right")
+        self.job_progress = ttk.Progressbar(summary, style="Warm.Horizontal.TProgressbar", mode="determinate", maximum=100)
+        self.job_progress.pack(fill="x", pady=(18, 19))
+        times = tk.Frame(summary, bg=CREAM)
+        times.pack(fill="x")
+        self.elapsed_label = self._label(times, "Elapsed  00:00:00", color=MUTED, size=11)
+        self.elapsed_label.pack(side="left")
+        self.remaining_label = self._label(times, "Time left  Calculating...", color=MUTED, size=11)
+        self.remaining_label.pack(side="right")
+
+        self.processing_hint = self._label(box, "Scenepackie is still running. You don't need to click anything again.", color=MUTED, size=10, wraplength=635, justify="left")
+        self.processing_hint.pack(anchor="w", pady=(22, 16))
+        self.processing_cancel = self._button(box, "Cancel", self._cancel_job, primary=False, padx=23, pady=10)
+        self.processing_cancel.pack(anchor="w")
+
+    def _cancel_job(self):
+        if not self.working or self.cancel.is_set():
+            return
+        self.cancel.set()
+        self.processing_cancel.configure(text="Cancelling...", state="disabled", cursor="arrow")
+        self.processing_hint.configure(text="Finishing the current step before stopping...")
+
+    def _update_processing(self):
+        """Update the clock independently of frame processing to show responsiveness."""
+        if not self.working or self.page != "processing":
+            return
+        elapsed = max(0.0, time.monotonic() - self.job_started)
+        fraction = self.job_fraction
+        percent = min(100, max(0, round(fraction * 100)))
+        self.stage_label.configure(text=self.job_stage)
+        self.percent_label.configure(text=f"{percent}%")
+        self.job_progress.configure(value=fraction * 100)
+        self.elapsed_label.configure(text=f"Elapsed  {clock(elapsed)}")
+        remaining = estimate_remaining(elapsed, fraction)
+        if self.cancel.is_set():
+            remaining_text = "Stopping..."
+        elif fraction >= 1:
+            remaining_text = "Finishing up..."
+        elif remaining is None:
+            remaining_text = "Calculating..."
+        else:
+            remaining_text = f"~{clock(remaining)} (estimate)"
+        self.remaining_label.configure(text=f"Time left  {remaining_text}")
+        self.status.configure(text=f"{self.job_stage.lower()}  ·  {percent}%")
+
+    def _restore_page(self):
+        if self.return_page == "faces":
+            self.show_faces()
+        elif self.return_page == "clips":
+            self.show_clips()
+        else:
+            self.show_upload()
+
+    def _job(self, task, callback, title, description):
         if self.working:
             return
         self.cancel = threading.Event()
         self.working = True
-        self.progress.configure(value=0)
-        self.progress.pack(side="right", padx=(14, 0), pady=4)
-        self.cancel_button.pack(side="right")
-        self.status.configure(text="working...")
+        self.return_page = self.page
+        self.job_started = time.monotonic()
+        self.job_fraction = 0.0
+        self.job_stage = title
+        self._show_processing(title, description)
+        self._update_processing()
 
         def report(label, fraction):
             self.queue.put(("progress", (label, fraction)))
@@ -160,7 +232,8 @@ class Scenepackie:
         threading.Thread(target=work, daemon=True).start()
 
     def discover(self):
-        self._job(lambda cancel, report: FaceScanner().discover(self.source, cancel, report), self._found)
+        self._job(lambda cancel, report: FaceScanner().discover(self.source, cancel, report), self._found,
+                  "Finding characters", "Scanning faces throughout your video. Longer movies can take a while, but the timer will keep running.")
 
     def _found(self, groups):
         self.groups = groups
@@ -200,7 +273,8 @@ class Scenepackie:
     def choose_face(self, index):
         self.selection = index
         group = self.groups[index]
-        self._job(lambda cancel, report: FaceScanner().find_clips(self.source, group, cancel, report), self._matched)
+        self._job(lambda cancel, report: FaceScanner().find_clips(self.source, group, cancel, report), self._matched,
+                  "Finding matching scenes", "Looking through the video for your chosen character. This is a more detailed scan.")
 
     def _matched(self, clips):
         self.clips = clips
@@ -246,7 +320,8 @@ class Scenepackie:
         folder = filedialog.askdirectory(title="Where should your scenepack go?")
         if not folder:
             return
-        self._job(lambda cancel, report: export_clips(self.source, self.clips, folder, self.make_zip.get(), cancel, report), self._exported)
+        self._job(lambda cancel, report: export_clips(self.source, self.clips, folder, self.make_zip.get(), cancel, report), self._exported,
+                  "Exporting clips", "Saving your selected clips to your computer. Please leave this window open until the export finishes.")
 
     def _exported(self, location):
         self.status.configure(text="finished!")
@@ -258,23 +333,25 @@ class Scenepackie:
                 event, payload = self.queue.get_nowait()
                 if event == "progress":
                     label, fraction = payload
-                    self.status.configure(text=label.lower())
-                    self.progress.configure(value=max(0, min(100, fraction * 100)))
+                    if self.working:
+                        self.job_stage = label
+                        self.job_fraction = max(self.job_fraction, max(0.0, min(1.0, fraction)))
                 else:
                     self.working = False
-                    self.progress.pack_forget()
-                    self.cancel_button.pack_forget()
                     if event == "done":
                         callback, result = payload
                         self.status.configure(text="ready")
                         callback(result)
                     elif event == "cancelled":
+                        self._restore_page()
                         self.status.configure(text="cancelled")
                     elif event == "error":
+                        self._restore_page()
                         self.status.configure(text="couldn't finish")
                         messagebox.showerror("Something went wrong", payload)
         except Empty:
             pass
+        self._update_processing()
         self.root.after(100, self._poll)
 
 
