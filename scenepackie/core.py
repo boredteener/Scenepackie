@@ -288,8 +288,9 @@ def export_clips(source: str, clips: list[Clip], destination: str, make_zip: boo
                         "-f", "concat", "-safe", "0", "-i", str(manifest), "-c", "copy",
                         "-movflags", "+faststart", str(combined)], cancel)
         except RuntimeError:
-            # Fall back to decoding and re-encoding in case the input streams
-            # can't be joined by stream copy.
+            if sys.platform == "darwin":
+                raise
+            # Windows-only fallback for incompatible streams.
             run_ffmpeg([binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
                         "-f", "concat", "-safe", "0", "-i", str(manifest),
                         "-c:v", "libx264", "-crf", "18", "-preset", "fast",
