@@ -1,0 +1,68 @@
+name: Release v0.4
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: Windows
+          - os: macos-15
+            platform: Mac-Apple-Silicon
+          - os: macos-15-intel
+            platform: Mac-Intel
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 65
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pyinstaller==6.16.0 imageio-ffmpeg==0.6.0
+      - name: Test
+        run: python -m unittest discover -s tests -v
+      - name: Download face models and Windows tools
+        run: python scripts/download_assets.py
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --onedir --windowed --name Scenepackie --add-data "models;models" --add-binary "bin/ffmpeg.exe;bin" --add-binary "bin/ffprobe.exe;bin" --add-binary "bin/ffplay.exe;bin" app.py
+          Compress-Archive -Path dist/Scenepackie -DestinationPath Scenepackie-v0.4-Windows.zip -Force
+      - name: Package Mac
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          pyinstaller --noconfirm --clean --onedir --windowed --name Scenepackie --collect-all imageio_ffmpeg --add-data "models:models" app.py
+          ditto -c -k --keepParent dist/Scenepackie.app "Scenepackie-v0.4-${{ matrix.platform }}.zip"
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: Scenepackie-v0.4-${{ matrix.platform }}
+          path: Scenepackie-v0.4-${{ matrix.platform }}.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Scenepackie-v0.4-*
+          path: packages
+          merge-multiple: true
+      - name: Publish v0.4
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create v0.4 packages/*.zip --title "Scenepackie 0.4" --notes-file RELEASE_NOTES.md --latest --target "${GITHUB_SHA}"
