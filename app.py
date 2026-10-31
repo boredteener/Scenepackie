@@ -19,6 +19,7 @@ from scenepackie.core import resource_path
 from scenepackie.core import Cancelled, FaceGroup, FaceScanner, Clip, binary, creation_flags, clock, export_clips, video_info
 from scenepackie.progress import estimate_remaining
 from scenepackie.cache import read_snapshot, save_characters, save_clips, clear_saved_scans
+from scenepackie.preview import create_mac_preview
 
 
 CREAM = "#F8F5EF"
@@ -347,19 +348,10 @@ class Scenepackie:
         if sys.platform == "darwin":
             def playback():
                 try:
-                    folder = Path(tempfile.gettempdir()) / "scenepackie-preview"
-                    folder.mkdir(exist_ok=True)
-                    target = folder / "preview.mp4"
-                    intermediate = folder / "rendering.mp4"
-                    command = [binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-y",
-                               "-ss", f"{clip.start:.3f}", "-i", self.source,
-                               "-t", f"{clip.duration:.3f}", "-map", "0:v:0", "-map", "0:a?",
-                               "-c:v", "libx264", "-crf", "20", "-preset", "ultrafast",
-                               "-pix_fmt", "yuv420p", "-c:a", "aac", str(intermediate)]
-                    subprocess.run(command, check=True, capture_output=True)
-                    os.replace(intermediate, target)
-                    subprocess.Popen(["open", str(target)])
-                except (OSError, subprocess.CalledProcessError) as exc:
+                    target = create_mac_preview(self.source, clip)
+                    subprocess.Popen(["open", str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    self.root.after(0, lambda: self.status.configure(text="Preview opened"))
+                except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
                     self.root.after(0, lambda message=str(exc): messagebox.showerror("Preview unavailable", message))
             threading.Thread(target=playback, daemon=True).start()
             self.status.configure(text="Preparing clip preview...")
