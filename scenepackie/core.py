@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 import math
 import os
@@ -49,7 +50,15 @@ def resource_path(relative: str) -> Path:
 
 def binary(name: str) -> str:
     path = resource_path(f"bin/{name}.exe" if os.name == "nt" else f"bin/{name}")
-    return str(path) if path.is_file() else name
+    if path.is_file():
+        return str(path)
+    if sys.platform == "darwin" and name == "ffmpeg":
+        try:
+            import imageio_ffmpeg
+            return imageio_ffmpeg.get_ffmpeg_exe()
+        except (ImportError, RuntimeError, OSError):
+            pass
+    return name
 
 
 def creation_flags() -> int:
@@ -66,10 +75,18 @@ def video_info(path: str) -> tuple[float, float]:
     finally:
         capture.release()
     if not math.isfinite(fps) or fps <= 0 or not math.isfinite(frames) or frames <= 0:
-        result = subprocess.run([binary("ffprobe"), "-v", "error", "-show_entries", "format=duration", "-of", "default=nokey=1:noprint_wrappers=1", path], capture_output=True, text=True, timeout=40, creationflags=creation_flags())
-        if result.returncode != 0:
-            raise ValueError("Couldn't determine this video's length.")
-        duration = float(result.stdout.strip())
+        if sys.platform == "darwin":
+            result = subprocess.run([binary("ffmpeg"), "-hide_banner", "-i", path], capture_output=True, text=True, timeout=40, creationflags=creation_flags())
+            match = re.search(r"Duration:\\s*(\\d+):(\\d+):(\\d+(?:\\.\\d+)?)", result.stderr)
+            if not match:
+                raise ValueError("Couldn't determine this video's length.")
+            hours, minutes, seconds = match.groups()
+            duration = 3600 * int(hours) + 60 * int(minutes) + float(seconds)
+        else:
+            result = subprocess.run([binary("ffprobe"), "-v", "error", "-show_entries", "format=duration", "-of", "default=nokey=1:noprint_wrappers=1", path], capture_output=True, text=True, timeout=40, creationflags=creation_flags())
+            if result.returncode != 0:
+                raise ValueError("Couldn't determine this video's length.")
+            duration = float(result.stdout.strip())
         fps = fps if fps > 0 else 25.0
     else:
         duration = frames / fps
