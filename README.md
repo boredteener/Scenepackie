@@ -17,7 +17,8 @@ The program is portable. You don't need to install Python, FFmpeg, face-recognit
 - Scans frames for faces and groups visually similar faces into selectable portraits.
 - Shows a live percentage, elapsed clock, and approximate time remaining during character discovery, clip searching, and exporting. While working, the start button is replaced by the progress screen so it cannot accidentally launch duplicate jobs. Cancellation returns you to the previous screen.
 - Searches the video for appearances of your chosen face.
-- Makes short clips around the matching frames. Review the timestamps, deselect unwanted clips, and export frame-accurate H.264 MP4 clips with audio.
+- Makes short clips around the matching frames. Preview each clip with sound in a player window, keep or deselect clips, and use Select all / Deselect all for bulk review.
+- Exports both individual H.264 MP4 clips and one continuous `_full_scenepack.mp4` containing only the selected clips, in timestamp order.
 - Can create a ZIP alongside the ordinary clip folder. Includes `clips.json` with timestamps.
 - Processes your movie completely **on your own computer**. Doesn't upload it or call an AI service.
 
@@ -29,4 +30,4 @@ The program is portable. You don't need to install Python, FFmpeg, face-recognit
 
 Python 3.11, Tkinter, OpenCV YuNet + SFace, Pillow and FFmpeg. To run from source, install requirements and get the models from `scripts/download_assets.py`. Windows builds bundle those dependencies automatically. Run tests with `python -m unittest discover -s tests -v`.
 
-Third-party libraries and models have their own licenses. The Windows package bundles FFmpeg. See OpenCV Zoo and FFmpeg's licenses and respect their terms if redistributing builds.
+Third-party libraries and models have their own licenses. The Windows package bundles FFmpeg and ffplay for audio/video previews. See OpenCV Zoo and FFmpeg's licenses and respect their terms if redistributing builds.
