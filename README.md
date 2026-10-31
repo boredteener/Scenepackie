@@ -11,10 +11,11 @@ A free, private character scenepack maker for editors. No accounts, no subscript
 
 The program is portable. You don't need to install Python, FFmpeg, face-recognition packages or any other programs. Windows may show a SmartScreen warning because the app isn't code-signed. GitHub retains workflow artifacts for 30 days; trigger the workflow again to build a fresh copy.
 
-## What this first version does
+## What this version does
 
 - Reads local MP4/MOV/MKV and other videos supported by OpenCV/FFmpeg.
 - Scans frames for faces and groups visually similar faces into selectable portraits.
+- Shows a live percentage, elapsed clock, and approximate time remaining during character discovery, clip searching, and exporting. While working, the start button is replaced by the progress screen so it cannot accidentally launch duplicate jobs. Cancellation returns you to the previous screen.
 - Searches the video for appearances of your chosen face.
 - Makes short clips around the matching frames. Review the timestamps, deselect unwanted clips, and export frame-accurate H.264 MP4 clips with audio.
 - Can create a ZIP alongside the ordinary clip folder. Includes `clips.json` with timestamps.
