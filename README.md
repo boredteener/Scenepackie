@@ -41,4 +41,4 @@ Python 3.11. Install `requirements.txt` plus `imageio-ffmpeg` on Mac, download t
 python -m unittest discover -s tests -v
 ```
 
-Code is MIT-licensed. FFmpeg, OpenCV, model files and other included dependencies retain their own licenses; consult their upstream licensing terms when redistributing the app.
+FFmpeg, OpenCV, model files and other included dependencies retain their own licenses; consult their upstream licensing terms when redistributing the app.
