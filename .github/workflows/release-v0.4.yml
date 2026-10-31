@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/release-v0.4.yml'
       - 'scripts/build_icons.py'
+      - 'tests/test_preview.py'
 
 permissions:
   contents: write
