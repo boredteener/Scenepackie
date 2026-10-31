@@ -29,7 +29,7 @@ jobs:
       - name: Package Scenepackie
         shell: pwsh
         run: |
-          pyinstaller --noconfirm --clean --onedir --windowed --name Scenepackie --add-data "models;models" --add-binary "bin/ffmpeg.exe;bin" --add-binary "bin/ffprobe.exe;bin" app.py
+          pyinstaller --noconfirm --clean --onedir --windowed --name Scenepackie --add-data "models;models" --add-binary "bin/ffmpeg.exe;bin" --add-binary "bin/ffprobe.exe;bin" --add-binary "bin/ffplay.exe;bin" app.py
           Compress-Archive -Path dist/Scenepackie -DestinationPath Scenepackie-Windows-Portable.zip -Force
       - name: Upload downloadable ZIP
         uses: actions/upload-artifact@v4
