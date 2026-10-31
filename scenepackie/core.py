@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 import math
 import os
 from pathlib import Path
@@ -208,6 +209,29 @@ def clock(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
+def concat_manifest(paths: list[Path]) -> str:
+    """Generate a safe FFmpeg concat demuxer list."""
+    if not paths:
+        raise ValueError("No clips to combine.")
+    return "".join("file '" + str(p.resolve()).replace("\\", "/").replace("'", "'\\''") + "'\\n" for p in paths)
+
+
+def run_ffmpeg(args: list[str], cancel: threading.Event) -> None:
+    process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=creation_flags())
+    try:
+        while process.poll() is None:
+            if cancel.wait(0.2):
+                process.kill()
+                process.wait()
+                raise Cancelled()
+        stderr = process.stderr.read().decode("utf-8", errors="replace") if process.stderr else ""
+        if process.returncode != 0:
+            raise RuntimeError("Video processing failed: " + stderr[-700:])
+    finally:
+        if process.stderr:
+            process.stderr.close()
+
+
 def export_clips(source: str, clips: list[Clip], destination: str, make_zip: bool, cancel: threading.Event, progress: Progress) -> Path:
     selected = [clip for clip in clips if clip.keep]
     if not selected:
@@ -215,27 +239,38 @@ def export_clips(source: str, clips: list[Clip], destination: str, make_zip: boo
     export_dir = Path(destination) / (Path(source).stem + "_scenepack")
     export_dir.mkdir(parents=True, exist_ok=True)
     records: list[dict] = []
+    exported: list[Path] = []
+    steps = len(selected) + 2 + int(make_zip)
     for i, clip in enumerate(selected, 1):
         if cancel.is_set():
             raise Cancelled()
         filename = f"clip_{i:03d}_{clock(clip.start).replace(':', '-')}.mp4"
         target = export_dir / filename
         args = [binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", f"{clip.start:.3f}", "-i", source, "-t", f"{clip.duration:.3f}", "-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(target)]
-        process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=creation_flags())
-        try:
-            while process.poll() is None:
-                if cancel.wait(0.2):
-                    process.kill()
-                    process.wait()
-                    raise Cancelled()
-            stderr = process.stderr.read().decode("utf-8", errors="replace") if process.stderr else ""
-            if process.returncode != 0:
-                raise RuntimeError(f"Couldn't export clip {i}: {stderr[-500:]}")
-        finally:
-            if process.stderr:
-                process.stderr.close()
+        run_ffmpeg(args, cancel)
+        exported.append(target)
         records.append({"file": filename, "start": round(clip.start, 3), "end": round(clip.end, 3)})
-        progress(f"Exporting clip {i} of {len(selected)}", i / (len(selected) + int(make_zip)))
+        progress(f"Exporting clip {i} of {len(selected)}", i / steps)
+    progress("Combining your scenepack", (len(selected) + 0.25) / steps)
+    combined = export_dir / (Path(source).stem + "_full_scenepack.mp4")
+    # The individual exports share encoding parameters; stream-copy concatenation
+    # preserves their quality and avoids a second expensive video encode.
+    with tempfile.TemporaryDirectory() as temp:
+        manifest = Path(temp) / "clips.txt"
+        manifest.write_text(concat_manifest(exported), encoding="utf-8")
+        try:
+            run_ffmpeg([binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                        "-f", "concat", "-safe", "0", "-i", str(manifest), "-c", "copy",
+                        "-movflags", "+faststart", str(combined)], cancel)
+        except RuntimeError:
+            # Fall back to decoding and re-encoding in case the input streams
+            # can't be joined by stream copy.
+            run_ffmpeg([binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+                        "-f", "concat", "-safe", "0", "-i", str(manifest),
+                        "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+                        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k",
+                        "-movflags", "+faststart", str(combined)], cancel)
+    progress("Scenepack combined", (len(selected) + 1) / steps)
     (export_dir / "clips.json").write_text(json.dumps({"source": Path(source).name, "clips": records}, indent=2), encoding="utf-8")
     if make_zip:
         archive = export_dir.with_suffix(".zip")
