@@ -306,12 +306,23 @@ class Scenepackie:
 
     def choose_face(self, index):
         self.selection = index
+        if str(index) in self.saved_matches:
+            self.clips = self.saved_matches[str(index)]
+            self.show_clips()
+            self.status.configure(text="Loaded saved clips")
+            return
         group = self.groups[index]
         self._job(lambda cancel, report: FaceScanner().find_clips(self.source, group, cancel, report), self._matched,
                   "Finding matching scenes", "Looking through the video for your chosen character. This is a more detailed scan.")
 
+    def _save_selection(self):
+        if self.selection is not None:
+            self.saved_matches[str(self.selection)] = self.clips
+            self._save_safely(lambda: save_clips(self.source, self.selection, self.clips))
+
     def _matched(self, clips):
         self.clips = clips
+        self._save_selection()
         self.show_clips()
 
     def _stop_preview(self):
@@ -341,6 +352,7 @@ class Scenepackie:
             clip.keep = keep
             var.set(keep)
         self._update_selected()
+        self._save_selection()
 
     def _update_selected(self):
         count = sum(clip.keep for clip in self.clips)
@@ -382,6 +394,7 @@ class Scenepackie:
             def change(value=var, item=clip):
                 item.keep = value.get()
                 self._update_selected()
+                self._save_selection()
             row = tk.Frame(inner, bg=CREAM if i % 2 else PAPER, padx=10, pady=9)
             row.pack(fill="x", pady=(0, 2))
             tk.Checkbutton(row, text=f"Clip {i:03d}", variable=var, command=change, bg=row.cget("bg"), fg=DARK, activebackground=row.cget("bg"), font=("Segoe UI", 10, "bold"), selectcolor=PAPER).pack(side="left")
