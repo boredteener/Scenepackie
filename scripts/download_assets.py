@@ -32,18 +32,22 @@ def main():
             raise RuntimeError(f"Model download incomplete: {name}")
 
     TOOLS.mkdir(parents=True, exist_ok=True)
-    if not (TOOLS / "ffmpeg.exe").exists():
+    # ffplay supplies video + audio previews without a VLC/Python installation.
+    binaries = ("ffmpeg.exe", "ffprobe.exe", "ffplay.exe")
+    if any(not (TOOLS / name).is_file() for name in binaries):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "ffmpeg.zip"
             download("https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip", archive)
             with zipfile.ZipFile(archive) as source:
-                for name in ("ffmpeg.exe", "ffprobe.exe"):
-                    entry = next((x for x in source.namelist() if x.endswith("/bin/" + name)), None)
+                for name in binaries:
+                    entry = next((x for x in source.namelist() if x.lower().endswith("/bin/" + name)), None)
                     if entry is None:
                         raise RuntimeError(f"Could not find {name} in FFmpeg build")
                     with source.open(entry) as item, (TOOLS / name).open("wb") as target:
                         shutil.copyfileobj(item, target)
-    print("Offline dependencies ready.", flush=True)
+    if any((TOOLS / name).stat().st_size < 100_000 for name in binaries):
+        raise RuntimeError("Incomplete bundled FFmpeg tools")
+    print("Offline dependencies ready (including preview player).", flush=True)
 
 
 if __name__ == "__main__":
