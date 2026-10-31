@@ -4,6 +4,9 @@ from __future__ import annotations
 from io import BytesIO
 from pathlib import Path
 import subprocess
+import os
+import sys
+import tempfile
 from queue import Empty, Queue
 import threading
 import time
@@ -332,20 +335,38 @@ class Scenepackie:
             player.terminate()
 
     def preview_clip(self, clip):
-        """Open a native playback window with sound at the selected timestamps."""
         self._stop_preview()
         if clip.duration <= 0:
+            return
+        if sys.platform == "darwin":
+            def playback():
+                try:
+                    folder = Path(tempfile.gettempdir()) / "scenepackie-preview"
+                    folder.mkdir(exist_ok=True)
+                    target = folder / "preview.mp4"
+                    intermediate = folder / "rendering.mp4"
+                    command = [binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-y",
+                               "-ss", f"{clip.start:.3f}", "-i", self.source,
+                               "-t", f"{clip.duration:.3f}", "-map", "0:v:0", "-map", "0:a?",
+                               "-c:v", "libx264", "-crf", "20", "-preset", "ultrafast",
+                               "-pix_fmt", "yuv420p", "-c:a", "aac", str(intermediate)]
+                    subprocess.run(command, check=True, capture_output=True)
+                    os.replace(intermediate, target)
+                    subprocess.Popen(["open", str(target)])
+                except (OSError, subprocess.CalledProcessError) as exc:
+                    self.root.after(0, lambda message=str(exc): messagebox.showerror("Preview unavailable", message))
+            threading.Thread(target=playback, daemon=True).start()
+            self.status.configure(text="Preparing clip preview...")
             return
         try:
             self.preview_process = subprocess.Popen(
                 [binary("ffplay"), "-loglevel", "error", "-autoexit",
                  "-window_title", "scenepackie · clip preview",
-                 "-ss", f"{clip.start:.3f}", "-t", f"{clip.duration:.3f}",
-                 "-i", self.source],
+                 "-ss", f"{clip.start:.3f}", "-t", f"{clip.duration:.3f}", "-i", self.source],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 creationflags=creation_flags())
         except OSError as exc:
-            messagebox.showerror("Couldn't preview clip", f"Preview playback could not start.\\n\\n{exc}")
+            messagebox.showerror("Couldn't preview clip", str(exc))
 
     def set_all_clips(self, keep):
         for clip, var in zip(self.clips, self.clip_vars):
