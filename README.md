@@ -1,33 +1,44 @@
 # scenepackie.
 
-A free, private character scenepack maker for editors. No accounts, no subscription, no cloud processing. A soft cream-and-brown desktop interface with three steps: **choose a video → choose a face → export your clips**.
+**Make the clips. Get back to editing.**
 
-## Download the Windows app (no installation)
+Scenepackie is a small, free desktop tool that finds a chosen face in a movie or episode and cuts the matching footage into a scenepack. Made for people who would rather edit than spend their evening scrubbing through a timeline.
 
-1. Open **[Actions → Build portable Windows app](../../actions/workflows/windows-portable.yml)**.
-2. Open the latest successful build (green check mark).
-3. Under **Artifacts**, download **Scenepackie-Windows-Portable**.
-4. Unzip the downloaded archive (you may find another ZIP inside) and open **Scenepackie/Scenepackie.exe**.
+No login. No subscription. No uploading your movie anywhere.
 
-The program is portable. You don't need to install Python, FFmpeg, face-recognition packages or any other programs. Windows may show a SmartScreen warning because the app isn't code-signed. GitHub retains workflow artifacts for 30 days; trigger the workflow again to build a fresh copy.
+## Download
 
-## What this version does
+**[Get Scenepackie 0.4 from Releases](../../releases/latest)**
 
-- Reads local MP4/MOV/MKV and other videos supported by OpenCV/FFmpeg.
-- Scans frames for faces and groups visually similar faces into selectable portraits.
-- Shows a live percentage, elapsed clock, and approximate time remaining during character discovery, clip searching, and exporting. While working, the start button is replaced by the progress screen so it cannot accidentally launch duplicate jobs. Cancellation returns you to the previous screen.
-- Searches the video for appearances of your chosen face.
-- Makes short clips around the matching frames. Preview each clip with sound in a player window, keep or deselect clips, and use Select all / Deselect all for bulk review.
-- Exports both individual H.264 MP4 clips and one continuous `_full_scenepack.mp4` containing only the selected clips, in timestamp order.
-- Can create a ZIP alongside the ordinary clip folder. Includes `clips.json` with timestamps.
-- Processes your movie completely **on your own computer**. Doesn't upload it or call an AI service.
+Choose the download for your computer:
 
-## Current limitations
+- **Windows:** `Scenepackie-v0.4-Windows.zip` — extract and launch `Scenepackie.exe`.
+- **Mac with Apple Silicon (M1/M2/M3/M4 and newer):** `Scenepackie-v0.4-Mac-Apple-Silicon.zip` — extract and open `Scenepackie.app`.
+- **Intel Mac:** `Scenepackie-v0.4-Mac-Intel.zip` — extract and open `Scenepackie.app`.
 
-**Early working version, not a promise of complete character coverage.** It detects visible, sufficiently clear *faces*, not every full-body appearance or offscreen spoken line. Characters can appear in more than one portrait group; some lighting, movement and occlusion can lead to missed matches or false positives. Scene boundaries are approximate and can be reviewed before export. Video scans can take a while on full movies, especially slower computers. Exporting re-encodes at high visual quality (CRF 18); it does **not** preserve original encoded bitstreams or lossless quality. Source material must be your own or footage you're entitled to process and share.
+You don't need Python, Homebrew, FFmpeg or a terminal. The Mac downloads are not Apple-notarized; macOS may block the first launch. If so, use **System Settings → Privacy & Security → Open Anyway** after attempting to open the app. Do this only if you trust the download. Windows may similarly display a SmartScreen warning on unsigned builds.
 
-## Developers
+## How it works
 
-Python 3.11, Tkinter, OpenCV YuNet + SFace, Pillow and FFmpeg. To run from source, install requirements and get the models from `scripts/download_assets.py`. Windows builds bundle those dependencies automatically. Run tests with `python -m unittest discover -s tests -v`.
+1. Pick a movie or TV episode from your computer.
+2. Hit **Find characters** and choose the person you're looking for.
+3. Review the matches. You can preview each clip with sound and uncheck anything you don't want.
+4. Export the individual clips plus one full continuous scenepack video. You can also save a ZIP.
 
-Third-party libraries and models have their own licenses. The Windows package bundles FFmpeg and ffplay for audio/video previews. See OpenCV Zoo and FFmpeg's licenses and respect their terms if redistributing builds.
+**New in 0.4:** Finished character and clip scans are saved automatically. Opening the same unchanged video again lets you continue without another full scan. The **Clear saved scans** button deletes that stored scan data, never your video or exported files. Moving or modifying the source video may require a new scan.
+
+## A few things to know
+
+Scenepackie looks for visible faces. A character whose face is hidden, turned away or only on screen for a split second can be missed. Sometimes another person gets picked up by mistake. Always check your clips before sharing them.
+
+Larger videos take longer. The progress screen shows elapsed time, percentage, and an approximate time remaining. Video quality is kept high on export, but clips are re-encoded rather than bit-for-bit copied. Scenepackie does not contain films or episodes, and you should only process and distribute material you're entitled to use.
+
+## Building from source
+
+Python 3.11. Install `requirements.txt` plus `imageio-ffmpeg` on Mac, download the OpenCV models through `scripts/download_assets.py`, then run `python app.py`. The portable downloads already include everything needed. Run tests with:
+
+```sh
+python -m unittest discover -s tests -v
+```
+
+Code is MIT-licensed. FFmpeg, OpenCV, model files and other included dependencies retain their own licenses; consult their upstream licensing terms when redistributing the app.
