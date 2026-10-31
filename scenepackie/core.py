@@ -213,7 +213,7 @@ def concat_manifest(paths: list[Path]) -> str:
     """Generate a safe FFmpeg concat demuxer list."""
     if not paths:
         raise ValueError("No clips to combine.")
-    return "".join("file '" + str(p.resolve()).replace("\\", "/").replace("'", "'\\''") + "'\\n" for p in paths)
+    return "".join("file '" + str(p.resolve()).replace("\\", "/").replace("'", "'\\''") + "'\n" for p in paths)
 
 
 def run_ffmpeg(args: list[str], cancel: threading.Event) -> None:
