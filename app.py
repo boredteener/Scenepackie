@@ -14,6 +14,7 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
 from PIL import Image, ImageTk
+from scenepackie.core import resource_path
 
 from scenepackie.core import Cancelled, FaceGroup, FaceScanner, Clip, binary, creation_flags, clock, export_clips, video_info
 from scenepackie.progress import estimate_remaining
@@ -36,6 +37,11 @@ class Scenepackie:
         self.root.geometry("960x735")
         self.root.minsize(760, 570)
         self.root.configure(bg=CREAM)
+        try:
+            self.app_icon = ImageTk.PhotoImage(Image.open(resource_path("assets/icon.png")).convert("RGBA"), master=self.root)
+            self.root.iconphoto(True, self.app_icon)
+        except (OSError, RuntimeError, tk.TclError):
+            pass
         self.source = ""
         self.groups: list[FaceGroup] = []
         self.clips: list[Clip] = []
