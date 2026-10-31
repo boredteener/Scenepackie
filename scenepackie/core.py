@@ -263,7 +263,11 @@ def export_clips(source: str, clips: list[Clip], destination: str, make_zip: boo
             raise Cancelled()
         filename = f"clip_{i:03d}_{clock(clip.start).replace(':', '-')}.mp4"
         target = export_dir / filename
-        args = [binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", f"{clip.start:.3f}", "-i", source, "-t", f"{clip.duration:.3f}", "-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(target)]
+        if sys.platform == "darwin":
+            from scenepackie.mac_media import mac_clip_args
+            args = mac_clip_args(binary("ffmpeg"), source, clip.start, clip.duration, target)
+        else:
+            args = [binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-ss", f"{clip.start:.3f}", "-i", source, "-t", f"{clip.duration:.3f}", "-map", "0:v:0", "-map", "0:a?", "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart", str(target)]
         run_ffmpeg(args, cancel)
         exported.append(target)
         records.append({"file": filename, "start": round(clip.start, 3), "end": round(clip.end, 3)})
@@ -276,7 +280,11 @@ def export_clips(source: str, clips: list[Clip], destination: str, make_zip: boo
         manifest = Path(temp) / "clips.txt"
         manifest.write_text(concat_manifest(exported), encoding="utf-8")
         try:
-            run_ffmpeg([binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+            if sys.platform == "darwin":
+                from scenepackie.mac_media import mac_combined_args
+                run_ffmpeg(mac_combined_args(binary("ffmpeg"), manifest, combined), cancel)
+            else:
+                run_ffmpeg([binary("ffmpeg"), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
                         "-f", "concat", "-safe", "0", "-i", str(manifest), "-c", "copy",
                         "-movflags", "+faststart", str(combined)], cancel)
         except RuntimeError:
