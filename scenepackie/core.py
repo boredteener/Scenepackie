@@ -161,11 +161,13 @@ class FaceScanner:
                 time = min(duration - 0.001, 0.5 + index * interval)
                 capture.set(cv2.CAP_PROP_POS_MSEC, time * 1000)
                 ok, frame = capture.read()
-                if not ok:
-                    continue
-                if index % 8 == 0:
+                detections = self.features(frame) if ok else []
+                # Report decoded *or* unreadable samples, so the display never
+                # stops updating just because a section of the video is damaged.
+                if index % 8 == 0 or index == samples - 1:
                     progress(label, (index + 1) / samples)
-                yield time, self.features(frame)
+                if ok:
+                    yield time, detections
         finally:
             capture.release()
         progress(label, 1.0)
