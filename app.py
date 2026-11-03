@@ -13,6 +13,7 @@ import time
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 
+import cv2
 from PIL import Image, ImageTk
 from scenepackie.core import resource_path
 
@@ -20,6 +21,8 @@ from scenepackie.core import Cancelled, FaceGroup, FaceScanner, Clip, binary, cr
 from scenepackie.progress import estimate_remaining
 from scenepackie.cache import read_snapshot, save_characters, save_clips, clear_saved_scans
 from scenepackie.preview import create_mac_preview
+from scenepackie.animation import AnimationMatcher, encode_reference
+from scenepackie.animation_cache import read_animation, save_animation, cache_path as animation_cache_path
 
 
 CREAM = "#F8F5EF"
@@ -60,6 +63,12 @@ class Scenepackie:
         self.preview_process = None
         self.clip_vars = []
         self.saved_matches = {}
+        self.video_kind = tk.StringVar(value="live")
+        self.animation_refs: list[bytes] = []
+        self.animation_saved_clips = None
+        self.anim_after = None
+        self.anim_frame = None
+        self.anim_crop = None
         self._theme()
         self._layout()
         self.show_upload()
@@ -112,6 +121,9 @@ class Scenepackie:
             label.configure(fg=BROWN if i == index else MUTED)
 
     def _clear(self):
+        if self.anim_after is not None:
+            self.root.after_cancel(self.anim_after)
+            self.anim_after = None
         self._stop_preview()
         self.photos.clear()
         for widget in self.body.winfo_children():
@@ -134,9 +146,19 @@ class Scenepackie:
         self._label(tile, "your video stays on your computer", size=12, bold=True, color=BROWN).pack(anchor="w")
         self._label(tile, "MP4, MKV, MOV, AVI and other supported videos", size=10, color=MUTED).pack(anchor="w", pady=(5, 15))
         self._button(tile, "Choose video", self.pick_video).pack(anchor="w")
+        modes = tk.Frame(box, bg=PAPER)
+        modes.pack(anchor="w", pady=(0, 14))
+        self._label(modes, "Video type:", size=10, color=MUTED).pack(side="left", padx=(0, 10))
+        for value, label in (("live", "Live action"), ("animated", "Animation (2D / 3D)")):
+            tk.Radiobutton(modes, text=label, variable=self.video_kind, value=value,
+                           bg=PAPER, fg=DARK, activebackground=PAPER, selectcolor=PAPER,
+                           font=("Segoe UI", 10), command=self.show_upload).pack(side="left", padx=(0, 14))
         if self.source:
             self._label(box, Path(self.source).name, color=BROWN, size=12, bold=True, wraplength=650, justify="left").pack(anchor="w", pady=(0, 14))
-            self._button(box, "Find characters   →", self.discover).pack(anchor="w")
+            if self.video_kind.get() == "animated":
+                self._button(box, "Choose animated character   →", self.show_animation_picker).pack(anchor="w")
+            else:
+                self._button(box, "Find characters   →", self.discover).pack(anchor="w")
         self._label(box, "No account, uploads, or subscriptions needed.", color=MUTED, size=10).pack(anchor="w", pady=(28, 0))
         self._button(box, "Clear saved scans", self.clear_scans, primary=False, padx=12, pady=7).pack(anchor="w", pady=(12, 0))
 
@@ -153,6 +175,9 @@ class Scenepackie:
         self.groups = []
         self.clips = []
         self.saved_matches = {}
+        self.animation_refs = []
+        self.animation_saved_clips = None
+        self.selection = None
         self.show_upload()
 
     def _show_processing(self, title, description):
@@ -216,7 +241,9 @@ class Scenepackie:
         self.status.configure(text=f"{self.job_stage.lower()}  ·  {percent}%")
 
     def _restore_page(self):
-        if self.return_page == "faces":
+        if self.return_page == "animation":
+            self.show_animation_picker()
+        elif self.return_page == "faces":
             self.show_faces()
         elif self.return_page == "clips":
             self.show_clips()
@@ -257,6 +284,8 @@ class Scenepackie:
         try:
             count, _ = clear_saved_scans()
             self.saved_matches = {}
+            self.animation_refs = []
+            self.animation_saved_clips = None
             messagebox.showinfo("Saved scans cleared", f"Removed {count} saved scan(s).")
         except OSError as exc:
             messagebox.showerror("Couldn't clear scans", str(exc))
@@ -326,6 +355,11 @@ class Scenepackie:
                   "Finding matching scenes", "Looking through the video for your chosen character. This is a more detailed scan.")
 
     def _save_selection(self):
+        if self.video_kind.get() == "animated":
+            if self.animation_refs:
+                self.animation_saved_clips = self.clips
+                self._save_safely(lambda: save_animation(self.source, self.animation_refs, self.clips))
+            return
         if self.selection is not None:
             self.saved_matches[str(self.selection)] = self.clips
             self._save_safely(lambda: save_clips(self.source, self.selection, self.clips))
@@ -387,7 +421,7 @@ class Scenepackie:
         self._label(box, f"{len(self.clips)} clips found  ·  uncheck anything you don't want", size=11, color=MUTED).pack(anchor="w", pady=(3, 12))
         if not self.clips:
             self._label(box, "No matches found. Try another face from the character list.", color=MUTED).pack(anchor="w", pady=15)
-            self._button(box, "Back to characters", self.show_faces, primary=False).pack(anchor="w")
+            self._button(box, "Back to characters", self.show_animation_picker if self.video_kind.get() == "animated" else self.show_faces, primary=False).pack(anchor="w")
             return
         tools = tk.Frame(box, bg=PAPER)
         tools.pack(fill="x", pady=(0, 10))
@@ -424,7 +458,7 @@ class Scenepackie:
         controls.pack(fill="x", pady=(16, 0))
         tk.Checkbutton(controls, text="ZIP everything (individual clips + full scenepack)", variable=self.make_zip, bg=PAPER, fg=DARK, activebackground=PAPER, selectcolor=PAPER, font=("Segoe UI", 10)).pack(side="left")
         self._button(controls, "Export clips   →", self.export).pack(side="right")
-        self._button(controls, "Back", self.show_faces, primary=False, padx=15).pack(side="right", padx=(0, 10))
+        self._button(controls, "Back", self.show_animation_picker if self.video_kind.get() == "animated" else self.show_faces, primary=False, padx=15).pack(side="right", padx=(0, 10))
 
     def export(self):
         folder = filedialog.askdirectory(title="Where should your scenepack go?")
