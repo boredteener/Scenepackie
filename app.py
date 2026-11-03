@@ -315,7 +315,15 @@ class Scenepackie:
         top = max(0, min(height-1, round((y1-oy) * height / display_h)))
         bottom = max(top+1, min(height, round((y2-oy) * height / display_h)))
         try:
-            image = encode_reference(self.anim_frame[top:bottom, left:right])
+            crop = self.anim_frame[top:bottom, left:right]
+            # Character reference and scan frames must use the same scale.
+            # Otherwise a 4K crop is much too large to match a 640px scan frame.
+            factor = min(1.0, 640.0 / width)
+            if factor < 1:
+                h, w = crop.shape[:2]
+                crop = cv2.resize(crop, (max(1, round(w * factor)), max(1, round(h * factor))),
+                                  interpolation=cv2.INTER_AREA)
+            image = encode_reference(crop)
         except ValueError as exc:
             messagebox.showerror("Select your character", str(exc))
             return
