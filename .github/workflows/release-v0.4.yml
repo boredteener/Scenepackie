@@ -8,6 +8,7 @@ on:
       - '.github/workflows/release-v0.4.yml'
       - 'scripts/build_icons.py'
       - 'tests/test_preview.py'
+      - 'tests/test_animation.py'
 
 permissions:
   contents: write
