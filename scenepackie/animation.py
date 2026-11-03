@@ -65,10 +65,10 @@ class AnimationMatcher:
                 factor = min(320 / h, 320 / w)
                 image = cv2.resize(image, (max(28, round(w * factor)), max(28, round(h * factor))))
                 gray = cv2.GaussianBlur(cv2.cvtColor(image, cv2.COLOR_BGR2GRAY), (3, 3), 0)
-            features = None
+            keys, features = [], None
             if self.sift is not None:
-                _, features = self.sift.detectAndCompute(gray, None)
-            self.refs.append((gray, _hist(image), features))
+                keys, features = self.sift.detectAndCompute(gray, None)
+            self.refs.append((gray, _hist(image), keys, features))
 
     @staticmethod
     def _evidence(gray: np.ndarray, histogram: np.ndarray, frame: np.ndarray, base_gray: np.ndarray) -> bool:
@@ -96,7 +96,7 @@ class AnimationMatcher:
     def matches_frame(self, frame: np.ndarray) -> bool:
         frame = _small(frame)
         base_gray = cv2.GaussianBlur(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY), (3, 3), 0)
-        for gray, colors, descriptors in self.refs:
+        for gray, colors, _, descriptors in self.refs:
             if self._evidence(gray, colors, frame, base_gray):
                 return True
 
@@ -104,16 +104,28 @@ class AnimationMatcher:
         # pose/camera changes even when the full template no longer aligns.
         if self.sift is None:
             return False
-        _, frame_features = self.sift.detectAndCompute(base_gray, None)
+        frame_keys, frame_features = self.sift.detectAndCompute(base_gray, None)
         if frame_features is None or len(frame_features) < 12:
             return False
         matcher = cv2.BFMatcher(cv2.NORM_L2)
-        for _, _, ref_features in self.refs:
+        for _, _, ref_keys, ref_features in self.refs:
             if ref_features is None or len(ref_features) < 12:
                 continue
             pairs = matcher.knnMatch(ref_features, frame_features, k=2)
-            good = [a for a, b in pairs if a.distance < 0.67 * b.distance]
-            if len(good) >= 12:
+            good = [a for pair in pairs if len(pair) == 2
+                    for a, b in [pair] if a.distance < 0.67 * b.distance]
+            if len(good) < 12:
+                continue
+            ref_points = np.float32([ref_keys[m.queryIdx].pt for m in good])
+            frame_points = np.float32([frame_keys[m.trainIdx].pt for m in good])
+            matrix, inliers = cv2.estimateAffinePartial2D(
+                ref_points, frame_points, method=cv2.RANSAC,
+                ransacReprojThreshold=4.0, maxIters=1200)
+            if matrix is None or inliers is None:
+                continue
+            count = int(inliers.sum())
+            scale = math.hypot(float(matrix[0, 0]), float(matrix[0, 1]))
+            if count >= 12 and count / len(good) >= 0.65 and 0.35 <= scale <= 2.5:
                 return True
         return False
 
