@@ -44,6 +44,23 @@ class AnimationDetectionTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             encode_reference(np.zeros((10, 10, 3), dtype=np.uint8))
 
+    def test_export_candidates_are_not_the_whole_cartoon(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "drawn_movie.avi"
+            writer = cv2.VideoWriter(str(source), cv2.VideoWriter_fourcc(*"MJPG"), 8, (640, 360))
+            self.assertTrue(writer.isOpened())
+            try:
+                for index in range(64):
+                    active = (8 <= index < 24) or (46 <= index < 56)
+                    writer.write(cartoon(active, shift=40 if index >= 46 else 0))
+            finally:
+                writer.release()
+            reference = encode_reference(cartoon()[72:280, 108:206])
+            clips = AnimationMatcher([reference]).find_clips(
+                str(source), threading.Event(), lambda *_: None)
+            self.assertGreaterEqual(len(clips), 2)
+            self.assertLess(sum(c.duration for c in clips), 5.5)
+
     def test_animation_cache_is_separate_and_persistent(self):
         with tempfile.TemporaryDirectory() as tmp:
             original = os.environ.get("SCENEPACKIE_CACHE_DIR")
