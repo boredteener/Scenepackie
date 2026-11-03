@@ -66,6 +66,7 @@ class Scenepackie:
         self.video_kind = tk.StringVar(value="live")
         self.animation_refs: list[bytes] = []
         self.animation_saved_clips = None
+        self.animation_cache_loaded = False
         self.anim_after = None
         self.anim_frame = None
         self.anim_crop = None
@@ -177,8 +178,186 @@ class Scenepackie:
         self.saved_matches = {}
         self.animation_refs = []
         self.animation_saved_clips = None
+        self.animation_cache_loaded = False
         self.selection = None
         self.show_upload()
+
+    def show_animation_picker(self):
+        if not self.source:
+            self.show_upload()
+            return
+        if not self.animation_cache_loaded:
+            stored = read_animation(self.source)
+            if stored:
+                self.animation_refs, self.animation_saved_clips = stored
+            self.animation_cache_loaded = True
+        self.page = "animation"
+        self._set_step(1)
+        self._clear()
+        box = self._panel(12)
+        self._label(box, "choose your animated character", size=18, bold=True).pack(anchor="w")
+        self._label(box, "Find a clear frame, then drag a tight box around the character (not the background).",
+                    color=MUTED, size=10, wraplength=660, justify="left").pack(anchor="w", pady=(3, 8))
+        self.anim_canvas = tk.Canvas(box, width=560, height=218, bg=CREAM,
+                                    highlightbackground=TAN, highlightthickness=1,
+                                    cursor="crosshair")
+        self.anim_canvas.pack(anchor="w")
+        self.anim_canvas.bind("<ButtonPress-1>", self._anim_begin)
+        self.anim_canvas.bind("<B1-Motion>", self._anim_drag)
+        self.anim_canvas.bind("<ButtonRelease-1>", self._anim_end)
+        duration, _ = video_info(self.source)
+        self.anim_seek = ttk.Scale(box, from_=0, to=max(0.05, duration - 0.05),
+                                   orient="horizontal", command=self._anim_seek_changed)
+        self.anim_seek.pack(fill="x", pady=(5, 0))
+        self.anim_clock = self._label(box, "00:00:00", color=MUTED, size=10)
+        self.anim_clock.pack(anchor="w")
+        self.anim_ref_label = self._label(box, "", color=BROWN, size=10, bold=True)
+        self.anim_ref_label.pack(anchor="w", pady=(4, 7))
+        buttons = tk.Frame(box, bg=PAPER)
+        buttons.pack(fill="x")
+        self._button(buttons, "Add this view", self._anim_add_reference,
+                     primary=False, padx=10, pady=8).pack(side="left", padx=(0, 7))
+        self._button(buttons, "Undo view", self._anim_remove_reference,
+                     primary=False, padx=10, pady=8).pack(side="left", padx=(0, 7))
+        self._button(buttons, "Find scenes   →", self._anim_find,
+                     padx=12, pady=8).pack(side="right")
+        self._button(buttons, "Back", self.show_upload,
+                     primary=False, padx=10, pady=8).pack(side="right", padx=(0, 7))
+        self._anim_update_ref_count()
+        self._anim_render_frame()
+
+    def _anim_update_ref_count(self):
+        count = len(self.animation_refs)
+        note = "Add up to 3 different looks or angles." if count < 3 else "Ready to scan."
+        self.anim_ref_label.configure(text=f"{count} of 3 character views added · {note}")
+
+    def _anim_seek_changed(self, value):
+        if hasattr(self, "anim_clock") and self.anim_clock.winfo_exists():
+            self.anim_clock.configure(text=clock(float(value)))
+        if self.anim_after is not None:
+            self.root.after_cancel(self.anim_after)
+        self.anim_after = self.root.after(190, self._anim_render_frame)
+
+    def _anim_render_frame(self):
+        self.anim_after = None
+        if self.page != "animation":
+            return
+        capture = cv2.VideoCapture(self.source)
+        try:
+            capture.set(cv2.CAP_PROP_POS_MSEC, float(self.anim_seek.get()) * 1000)
+            ok, frame = capture.read()
+        finally:
+            capture.release()
+        self.anim_canvas.delete("all")
+        self.anim_crop = None
+        self.anim_frame = None
+        if not ok:
+            self.anim_canvas.create_text(280, 110, text="Can't read this frame. Try another spot.",
+                                         fill=BROWN, font=("Segoe UI", 11))
+            return
+        self.anim_frame = frame
+        height, width = frame.shape[:2]
+        factor = min(560 / width, 218 / height)
+        dw, dh = max(1, round(width * factor)), max(1, round(height * factor))
+        picture = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).resize((dw, dh), Image.Resampling.LANCZOS)
+        self.anim_photo = ImageTk.PhotoImage(picture, master=self.root)
+        x, y = (560 - dw) // 2, (218 - dh) // 2
+        self.anim_canvas.create_image(x, y, anchor="nw", image=self.anim_photo)
+        self.anim_bounds = (x, y, dw, dh)
+
+    def _anim_bound_point(self, x, y):
+        left, top, width, height = self.anim_bounds
+        return (max(left, min(left + width, x)), max(top, min(top + height, y)))
+
+    def _anim_begin(self, event):
+        if self.anim_frame is None:
+            return
+        self.anim_drag_start = self._anim_bound_point(event.x, event.y)
+        self.anim_crop = None
+        self.anim_canvas.delete("selection")
+
+    def _anim_drag(self, event):
+        if not hasattr(self, "anim_drag_start") or self.anim_frame is None:
+            return
+        x1, y1 = self.anim_drag_start
+        x2, y2 = self._anim_bound_point(event.x, event.y)
+        self.anim_canvas.delete("selection")
+        self.anim_canvas.create_rectangle(x1, y1, x2, y2, outline=BROWN, width=3,
+                                          tags="selection")
+
+    def _anim_end(self, event):
+        if not hasattr(self, "anim_drag_start") or self.anim_frame is None:
+            return
+        x1, y1 = self.anim_drag_start
+        x2, y2 = self._anim_bound_point(event.x, event.y)
+        del self.anim_drag_start
+        if abs(x2 - x1) < 24 or abs(y2 - y1) < 24:
+            self.anim_crop = None
+            self.anim_canvas.delete("selection")
+            return
+        self.anim_crop = (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+
+    def _anim_add_reference(self):
+        if self.anim_frame is None or self.anim_crop is None:
+            messagebox.showinfo("Select your character", "Drag a box around the character in the frame first.")
+            return
+        if len(self.animation_refs) >= 3:
+            messagebox.showinfo("Character views", "You've added three views. Undo one to replace it.")
+            return
+        x1, y1, x2, y2 = self.anim_crop
+        ox, oy, display_w, display_h = self.anim_bounds
+        if (x2-x1) * (y2-y1) > 0.75 * display_w * display_h:
+            messagebox.showinfo("Select your character", "Try a tighter box around the character, without most of the background.")
+            return
+        height, width = self.anim_frame.shape[:2]
+        left = max(0, min(width-1, round((x1-ox) * width / display_w)))
+        right = max(left+1, min(width, round((x2-ox) * width / display_w)))
+        top = max(0, min(height-1, round((y1-oy) * height / display_h)))
+        bottom = max(top+1, min(height, round((y2-oy) * height / display_h)))
+        try:
+            image = encode_reference(self.anim_frame[top:bottom, left:right])
+        except ValueError as exc:
+            messagebox.showerror("Select your character", str(exc))
+            return
+        self.animation_refs.append(image)
+        self.animation_saved_clips = None
+        self._save_safely(lambda: save_animation(self.source, self.animation_refs))
+        self._anim_update_ref_count()
+        self.anim_crop = None
+        self.anim_canvas.delete("selection")
+
+    def _anim_remove_reference(self):
+        if not self.animation_refs:
+            return
+        self.animation_refs.pop()
+        self.animation_saved_clips = None
+        if self.animation_refs:
+            self._save_safely(lambda: save_animation(self.source, self.animation_refs))
+        else:
+            try:
+                animation_cache_path(self.source).unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._anim_update_ref_count()
+
+    def _anim_find(self):
+        if not self.animation_refs:
+            messagebox.showinfo("Choose a character", "Add at least one clear character view first.")
+            return
+        if self.animation_saved_clips is not None:
+            self.clips = self.animation_saved_clips
+            self.show_clips()
+            self.status.configure(text="Loaded saved animation scan")
+            return
+        refs = list(self.animation_refs)
+        self._job(lambda cancel, progress: AnimationMatcher(refs).find_clips(self.source, cancel, progress),
+                  self._anim_matched, "Finding animated scenes",
+                  "Searching for the character's visual details. You can review the clips before exporting.")
+
+    def _anim_matched(self, clips):
+        self.clips = clips
+        self._save_selection()
+        self.show_clips()
 
     def _show_processing(self, title, description):
         """Replace the previous action screen so scans cannot be started twice."""
@@ -286,6 +465,7 @@ class Scenepackie:
             self.saved_matches = {}
             self.animation_refs = []
             self.animation_saved_clips = None
+            self.animation_cache_loaded = True
             messagebox.showinfo("Saved scans cleared", f"Removed {count} saved scan(s).")
         except OSError as exc:
             messagebox.showerror("Couldn't clear scans", str(exc))
