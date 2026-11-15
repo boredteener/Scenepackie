@@ -4,6 +4,8 @@ from urllib.request import Request, urlopen
 import shutil
 import sys
 import tempfile
+import time
+from urllib.error import HTTPError, URLError
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,11 +14,20 @@ TOOLS = ROOT / "bin"
 
 
 def download(url: str, destination: Path):
+    """Retry temporary upstream outages rather than publishing an incomplete build."""
     destination.parent.mkdir(parents=True, exist_ok=True)
-    request = Request(url, headers={"User-Agent": "Scenepackie-build/1.0"})
-    with urlopen(request, timeout=120) as remote, destination.open("wb") as target:
-        shutil.copyfileobj(remote, target)
-    print(f"Downloaded {destination.name}: {destination.stat().st_size:,} bytes", flush=True)
+    for attempt in range(5):
+        try:
+            request = Request(url, headers={"User-Agent": "Scenepackie-build/1.0"})
+            with urlopen(request, timeout=120) as remote, destination.open("wb") as target:
+                shutil.copyfileobj(remote, target)
+            print(f"Downloaded {destination.name}: {destination.stat().st_size:,} bytes", flush=True)
+            return
+        except (HTTPError, URLError, TimeoutError, ConnectionError):
+            destination.unlink(missing_ok=True)
+            if attempt == 4:
+                raise
+            time.sleep(min(30, 3 * (2 ** attempt)))
 
 
 def main():
