@@ -603,12 +603,14 @@ class Scenepackie:
         self.status.configure(text=f"{self.job_stage.lower()}  ·  {percent}%")
 
     def _restore_page(self):
-        if self.return_page == "animation":
+        if self.return_page in ("animation", "tv_animation"):
             self.show_animation_picker()
-        elif self.return_page == "faces":
+        elif self.return_page in ("faces", "tv_faces"):
             self.show_faces()
-        elif self.return_page == "clips":
+        elif self.return_page in ("clips", "tv_clips"):
             self.show_clips()
+        elif self.return_page == "tv_setup":
+            self.show_tv_setup()
         else:
             self.show_upload()
 
@@ -676,7 +678,7 @@ class Scenepackie:
         self.show_faces()
 
     def show_faces(self):
-        self.page = "faces"
+        self.page = "tv_faces" if self.tv_active else "faces"
         self._set_step(1)
         self._clear()
         box = self._panel(25)
@@ -684,7 +686,9 @@ class Scenepackie:
         self._label(box, "Choose a face below. If someone appears twice, choose their clearest photo.", size=10, color=MUTED).pack(anchor="w", pady=(4, 13))
         if not self.groups:
             self._label(box, "No repeated faces were found. Try a different or clearer video.", color=MUTED).pack(anchor="w", pady=18)
-            self._button(box, "Choose another video", self.show_upload, primary=False).pack(anchor="w")
+            self._button(box, "Back to TV show" if self.tv_active else "Choose another video",
+                         self.show_tv_setup if self.tv_active else self.show_upload,
+                         primary=False).pack(anchor="w")
             return
         canvas = tk.Canvas(box, bg=PAPER, highlightthickness=0)
         scroll = ttk.Scrollbar(box, orient="vertical", command=canvas.yview)
@@ -705,8 +709,14 @@ class Scenepackie:
             face.bind("<Button-1>", lambda _, i=index: self.choose_face(i))
             self._button(card, f"Choose  #{index+1}", lambda i=index: self.choose_face(i), primary=False, padx=7, pady=6).pack(fill="x", pady=(8, 0))
         self._label(box, "Faces are detected from video frames. Check the exported clips for missed or incorrect matches.", color=MUTED, size=9, wraplength=680, justify="left").pack(anchor="w", pady=(12, 0))
+        if self.tv_active:
+            self._button(box, "Back to TV show", self.show_tv_setup, primary=False,
+                         padx=13, pady=7).pack(anchor="w", pady=(9, 0))
 
     def choose_face(self, index):
+        if self.tv_active:
+            self._tv_choose_face(index)
+            return
         self.selection = index
         if str(index) in self.saved_matches:
             self.clips = self.saved_matches[str(index)]
@@ -718,6 +728,9 @@ class Scenepackie:
                   "Finding matching scenes", "Looking through the video for your chosen character. This is a more detailed scan.")
 
     def _save_selection(self):
+        if self.tv_active:
+            self._tv_save_selection()
+            return
         if self.video_kind.get() == "animated":
             if self.animation_refs:
                 self.animation_saved_clips = self.clips
