@@ -68,6 +68,10 @@ class Scenepackie:
         self.preview_request = None
         self.preview_token = 0
         self.preview_dialog = None
+        self.preview_fallback_dialog = None
+        self.preview_ready_file = None
+        self.preview_started_at = 0.0
+        self.preview_fallback_file = None
         self.clip_checkbox_vars = {}
         self.clip_vars = []
         self.saved_matches = {}
@@ -805,6 +809,8 @@ class Scenepackie:
         """Stop an abandoned preview without asking about an unrelated clip."""
         self.preview_token += 1
         self.preview_request = None
+        self.preview_ready_file = None
+        self.preview_fallback_file = None
         player = self.preview_process
         self.preview_process = None
         if player is not None and player.poll() is None:
@@ -818,8 +824,15 @@ class Scenepackie:
             except tk.TclError:
                 pass
             self.preview_dialog = None
+        fallback = getattr(self, "preview_fallback_dialog", None)
+        if fallback is not None:
+            try:
+                fallback.destroy()
+            except tk.TclError:
+                pass
+            self.preview_fallback_dialog = None
 
-    def _launch_preview(self, command, clip, label, token):
+    def _launch_preview(self, command, clip, label, token, ready_file=None, fallback_file=None):
         if token != self.preview_token or self.page not in ("clips", "tv_clips"):
             return
         try:
@@ -831,6 +844,9 @@ class Scenepackie:
             messagebox.showerror("Couldn't preview clip", str(exc))
             return
         self.preview_request = (token, clip, label)
+        self.preview_ready_file = Path(ready_file) if ready_file else None
+        self.preview_fallback_file = fallback_file
+        self.preview_started_at = time.monotonic()
         self.status.configure(text=f"Watching {label}")
 
     def preview_clip(self, clip, source=None, label=None):
@@ -859,18 +875,37 @@ class Scenepackie:
             clip, label, token)
 
     def _poll_preview(self):
-        """Called on Tk's main thread; works for closing and finishing playback."""
+        """Wait for the player to finish; recover through QuickTime if Mac launch fails."""
         player = self.preview_process
         pending = self.preview_request
         if player is None or pending is None:
             return
+        token, clip, label = pending
+        ready_file = getattr(self, "preview_ready_file", None)
         status = player.poll()
         if status is None:
+            # A macOS application may be blocked from launching even when the
+            # "open" command stays alive. Never leave the editor stuck.
+            if (ready_file is not None and not ready_file.is_file()
+                    and time.monotonic() - self.preview_started_at > 18):
+                try:
+                    player.terminate()
+                except OSError:
+                    pass
+                self.preview_process = None
+                self._fallback_to_quicktime(
+                    token, clip, label,
+                    "The native player didn't start. Opening the clip in QuickTime instead.")
             return
+
         self.preview_process = None
         self.preview_request = None
-        token, clip, label = pending
         if token != self.preview_token or self.page not in ("clips", "tv_clips"):
+            return
+        if ready_file is not None and (status != 0 or not ready_file.is_file()):
+            self._fallback_to_quicktime(
+                token, clip, label,
+                "The native player couldn't open this preview. Using QuickTime instead.")
             return
         if status != 0:
             self.status.configure(text="preview couldn't play")
@@ -879,6 +914,53 @@ class Scenepackie:
         if not any(item is clip for item in self.clips):
             return
         self._ask_preview_choice(clip, label)
+
+    def _fallback_to_quicktime(self, token, clip, label, reason):
+        """Always preserve the working Mac preview path when the native helper fails."""
+        if token != self.preview_token or self.page not in ("clips", "tv_clips"):
+            return
+        path = self.preview_fallback_file
+        self.preview_request = None
+        self.preview_ready_file = None
+        if not path:
+            messagebox.showerror("Preview unavailable", reason)
+            return
+        try:
+            subprocess.Popen(["open", str(path)], stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL)
+        except OSError as exc:
+            messagebox.showerror("Preview unavailable", str(exc))
+            return
+        self.status.configure(text=f"Playing {label} in QuickTime")
+        dialog = tk.Toplevel(self.root)
+        self.preview_fallback_dialog = dialog
+        dialog.title("scenepackie · preview")
+        dialog.configure(bg=PAPER)
+        dialog.resizable(False, False)
+        dialog.geometry("445x225")
+        body = tk.Frame(dialog, bg=PAPER, padx=26, pady=19)
+        body.pack(fill="both", expand=True)
+        self._label(body, "preview opened in QuickTime", size=16,
+                    bold=True, color=BROWN).pack(anchor="w")
+        self._label(body, label, size=11, color=MUTED).pack(anchor="w", pady=(6, 4))
+        self._label(body, "Watch the clip, then return here and click Review clip. "
+                    "You'll still get the Yes / No choice.",
+                    size=10, color=MUTED, justify="left",
+                    wraplength=370).pack(anchor="w", pady=(0, 13))
+        buttons = tk.Frame(body, bg=PAPER)
+        buttons.pack(anchor="e")
+        def finish(review):
+            if self.preview_fallback_dialog is not dialog:
+                return
+            self.preview_fallback_dialog = None
+            dialog.destroy()
+            if review and token == self.preview_token and any(item is clip for item in self.clips):
+                self._ask_preview_choice(clip, label)
+        dialog.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+        self._button(buttons, "Cancel", lambda: finish(False), primary=False,
+                     padx=13, pady=8).pack(side="left", padx=(0, 8))
+        self._button(buttons, "Review clip", lambda: finish(True),
+                     padx=15, pady=8).pack(side="left")
 
     def _ask_preview_choice(self, clip, label):
         """Show the same warm, minimal Yes/No prompt on Windows and macOS."""
@@ -1090,13 +1172,20 @@ class Scenepackie:
                 elif event == "preview_ready":
                     token, clip, label, path = payload
                     if token == self.preview_token and self.page in ("clips", "tv_clips"):
-                        executable = resource_path("bin/ScenepackiePreview")
+                        app_bundle = resource_path("bin/ScenepackiePreview.app")
+                        executable = app_bundle / "Contents" / "MacOS" / "ScenepackiePreview"
                         if executable.is_file():
-                            self._launch_preview([str(executable), path], clip, label, token)
+                            import uuid
+                            ready = Path(tempfile.gettempdir()) / f"scenepackie-ready-{uuid.uuid4().hex}.txt"
+                            self._launch_preview(
+                                ["open", "-n", "-W", "-a", str(app_bundle),
+                                 "--args", path, str(ready)],
+                                clip, label, token, ready_file=ready, fallback_file=path)
                         else:
-                            self.preview_request = None
-                            messagebox.showerror("Preview unavailable",
-                                                 "The Mac preview player wasn't included in this build.")
+                            self.preview_fallback_file = path
+                            self._fallback_to_quicktime(
+                                token, clip, label,
+                                "The native player wasn't included in this build.")
                 elif event == "preview_error":
                     token, reason = payload
                     if token == self.preview_token and self.page in ("clips", "tv_clips"):
