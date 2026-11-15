@@ -33,6 +33,7 @@ class Clip:
     start: float
     end: float
     keep: bool = True
+    rejected: bool = False  # Explicit 'No' from preview review, not just unchecked.
 
     @property
     def duration(self) -> float:
