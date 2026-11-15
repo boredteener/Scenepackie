@@ -1026,6 +1026,14 @@ class Scenepackie:
         self._update_selected()
         self._save_selection()
 
+    def _manual_clip_selection(self, clip, checked):
+        """A checkbox selection may reverse an earlier explicit No."""
+        clip.keep = bool(checked)
+        if clip.keep:
+            clip.rejected = False
+        self._update_selected()
+        self._save_selection()
+
     def _update_selected(self):
         count = sum(clip.keep for clip in self.clips)
         if hasattr(self, "selected_label") and self.selected_label.winfo_exists():
@@ -1117,12 +1125,7 @@ class Scenepackie:
             self.clip_vars.append(var)
             self.clip_checkbox_vars[id(clip)] = var
             def change(value=var, item=clip):
-                item.keep = value.get()
-                if item.keep:
-                    # Checking the clip is the explicit way to reverse No.
-                    item.rejected = False
-                self._update_selected()
-                self._save_selection()
+                self._manual_clip_selection(item, value.get())
             row = tk.Frame(inner, bg=CREAM if idx % 2 == 0 else PAPER, padx=10, pady=9)
             row.pack(fill="x", pady=(0, 2))
             label = f"{ep.label} · Clip {idx+1:03d}" if ep else f"Clip {idx+1:03d}"
