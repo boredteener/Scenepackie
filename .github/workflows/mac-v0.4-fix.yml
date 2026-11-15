@@ -4,6 +4,7 @@ on:
     branches: [main]
     paths:
       - '.github/workflows/mac-v0.4-fix.yml'
+      - 'tests/test_quicktime_direct.py'
   workflow_dispatch:
 permissions:
   contents: write
