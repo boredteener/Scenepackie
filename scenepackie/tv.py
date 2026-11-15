@@ -135,11 +135,14 @@ def unpack_faces(rows: list[dict]) -> list[FaceGroup]:
 
 
 def pack_clips(clips: list[Clip]) -> list[dict]:
-    return [{"start": c.start, "end": c.end, "keep": c.keep} for c in clips]
+    return [{"start": c.start, "end": c.end, "keep": c.keep,
+             "rejected": c.rejected and not c.keep} for c in clips]
 
 
 def unpack_clips(rows: list[dict]) -> list[Clip]:
-    return [Clip(float(r["start"]), float(r["end"]), bool(r.get("keep", True))) for r in rows]
+    return [Clip(float(r["start"]), float(r["end"]), bool(r.get("keep", True)),
+                 bool(r.get("rejected", False)) and not bool(r.get("keep", True)))
+            for r in rows]
 
 
 def combine_faces(groups: list[FaceGroup], additions: list[FaceGroup]) -> list[FaceGroup]:
