@@ -1172,7 +1172,12 @@ class Scenepackie:
                 elif event == "preview_ready":
                     token, clip, label, path = payload
                     if token == self.preview_token and self.page in ("clips", "tv_clips"):
-                        app_bundle = resource_path("bin/ScenepackiePreview.app")
+                        # PyInstaller's macOS layout keeps nested app bundles in
+                        # Contents/Helpers (not its symlink-managed data folders).
+                        app_bundle = (Path(sys.executable).resolve().parent.parent /
+                                      "Helpers" / "ScenepackiePreview.app")
+                        if not app_bundle.is_dir():
+                            app_bundle = resource_path("bin/ScenepackiePreview.app")
                         executable = app_bundle / "Contents" / "MacOS" / "ScenepackiePreview"
                         if executable.is_file():
                             import uuid
