@@ -60,6 +60,17 @@ class TestRejectedPreview(unittest.TestCase):
         self.assertIn("you said no to this clip", str(info.call_args))
         app._launch_preview.assert_called_once()
 
+    def test_mac_preview_warns_before_starting_preparation(self):
+        app, clip = self.app(Clip(5, 8, keep=False, rejected=True))
+        with patch("app.sys.platform", "darwin"), \
+             patch("app.messagebox.showinfo") as info, \
+             patch("app.threading.Thread") as worker:
+            app.preview_clip(clip, "movie.mp4", "Clip 003")
+        info.assert_called_once()
+        self.assertIn("you said no to this clip", str(info.call_args))
+        worker.assert_called_once()
+        worker.return_value.start.assert_called_once()
+
     def test_rejected_clip_cannot_be_readded_by_yes(self):
         app, clip = self.app(Clip(5, 8, keep=False, rejected=True))
         app._finish_preview_choice(True, clip)
@@ -84,7 +95,7 @@ class TestRejectedPreview(unittest.TestCase):
         self.assertFalse(clip.rejected)
         app._save_selection.assert_called_once()
         app._launch_preview = Mock()
-        with patch("app.messagebox.showinfo") as info:
+        with patch("app.sys.platform", "win32"), patch("app.messagebox.showinfo") as info:
             app.preview_clip(clip, "movie.mp4", "Clip 003")
         info.assert_not_called()
 
