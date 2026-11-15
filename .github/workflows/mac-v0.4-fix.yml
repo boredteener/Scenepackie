@@ -30,14 +30,11 @@ jobs:
       - run: python scripts/build_icons.py
       - name: Package Mac
         run: |
-          bash scripts/build_mac_preview.sh
           pyinstaller --noconfirm --clean --onedir --windowed --name Scenepackie --icon build_icons/Scenepackie.icns --add-data "build_icons/icon.png:assets" --collect-all imageio_ffmpeg --add-data "models:models" app.py
-          mkdir -p dist/Scenepackie.app/Contents/Helpers
-          ditto native/ScenepackiePreview.app dist/Scenepackie.app/Contents/Helpers/ScenepackiePreview.app
-          test -x dist/Scenepackie.app/Contents/Helpers/ScenepackiePreview.app/Contents/MacOS/ScenepackiePreview
-          codesign --verify --verbose=2 dist/Scenepackie.app/Contents/Helpers/ScenepackiePreview.app
-          codesign --force --deep --sign - dist/Scenepackie.app
-          codesign --verify --deep --verbose=2 dist/Scenepackie.app
+          if find dist/Scenepackie.app -name 'ScenepackiePreview*' -print | grep -q .; then
+            echo "Unexpected native preview helper found in app"
+            exit 1
+          fi
           ditto -c -k --keepParent dist/Scenepackie.app "Scenepackie-v0.4-${{ matrix.label }}.zip"
       - uses: actions/upload-artifact@v4
         with:
