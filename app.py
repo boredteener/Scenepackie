@@ -157,11 +157,20 @@ class Scenepackie:
         box = self._panel(49)
         self._label(box, "start with a video", size=21, bold=True).pack(anchor="w")
         self._label(box, "Choose a movie, TV episode or video from your computer.", color=MUTED, size=11).pack(anchor="w", pady=(5, 25))
-        tile = tk.Frame(box, bg=CREAM, highlightbackground=TAN, highlightthickness=1, padx=23, pady=29)
+        tile = tk.Frame(box, bg=CREAM, highlightbackground=TAN, highlightthickness=1, padx=23, pady=23)
         tile.pack(fill="x", pady=(0, 20))
-        self._label(tile, "your video stays on your computer", size=12, bold=True, color=BROWN).pack(anchor="w")
-        self._label(tile, "MP4, MKV, MOV, AVI and other supported videos", size=10, color=MUTED).pack(anchor="w", pady=(5, 15))
-        self._button(tile, "Choose video", self.pick_video).pack(anchor="w")
+        if self.video_kind.get() == "tv":
+            self._label(tile, "one character across every season", size=12,
+                        bold=True, color=BROWN).pack(anchor="w")
+            self._label(tile, "Choose the show folder to work with its episodes in order.",
+                        size=10, color=MUTED).pack(anchor="w", pady=(5, 15))
+            self._button(tile, "Set up TV show", self.show_tv_setup).pack(anchor="w")
+        else:
+            self._label(tile, "your video stays on your computer", size=12,
+                        bold=True, color=BROWN).pack(anchor="w")
+            self._label(tile, "MP4, MKV, MOV, AVI and other supported videos",
+                        size=10, color=MUTED).pack(anchor="w", pady=(5, 15))
+            self._button(tile, "Choose video", self.pick_video).pack(anchor="w")
         modes = tk.Frame(box, bg=PAPER)
         modes.pack(anchor="w", pady=(0, 14))
         self._label(modes, "Video type:", size=10, color=MUTED).pack(side="left", padx=(0, 10))
@@ -169,8 +178,6 @@ class Scenepackie:
             tk.Radiobutton(modes, text=label, variable=self.video_kind, value=value,
                            bg=PAPER, fg=DARK, activebackground=PAPER, selectcolor=PAPER,
                            font=("Segoe UI", 10), command=self._on_video_mode).pack(side="left", padx=(0, 14))
-        if self.video_kind.get() == "tv":
-            self._button(box, "Set up TV show   →", self.show_tv_setup).pack(anchor="w")
         if self.source and self.video_kind.get() != "tv":
             self._label(box, Path(self.source).name, color=BROWN, size=12, bold=True, wraplength=650, justify="left").pack(anchor="w", pady=(0, 14))
             if self.video_kind.get() == "animated":
