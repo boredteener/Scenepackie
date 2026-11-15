@@ -9,6 +9,7 @@ on:
       - 'scripts/build_icons.py'
       - 'tests/test_preview.py'
       - 'tests/test_animation.py'
+      - 'tests/test_tv.py'
 
 permissions:
   contents: write
