@@ -64,7 +64,8 @@ def read_snapshot(source: str) -> tuple[list[FaceGroup], dict[str, list[Clip]]] 
         for key, rows in data.get("clips", {}).items():
             if not key.isdecimal() or int(key) >= len(groups) or len(rows) > 100_000:
                 return None
-            clips = [Clip(float(c["start"]), float(c["end"]), bool(c["keep"])) for c in rows]
+            clips = [Clip(float(c["start"]), float(c["end"]), bool(c["keep"]),
+                          bool(c.get("rejected", False)) and not bool(c["keep"])) for c in rows]
             if any(not (0 <= c.start < c.end < 10_000_000) for c in clips):
                 return None
             matches[key] = clips
@@ -88,7 +89,8 @@ def _atomic_write(source: str, groups: list[FaceGroup], matches: dict[str, list[
             } for g in groups
         ],
         "clips": {
-            key: [{"start": c.start, "end": c.end, "keep": c.keep} for c in clips]
+            key: [{"start": c.start, "end": c.end, "keep": c.keep,
+                   "rejected": c.rejected and not c.keep} for c in clips]
             for key, clips in matches.items()
         },
     }
