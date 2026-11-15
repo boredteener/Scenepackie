@@ -69,9 +69,6 @@ class Scenepackie:
         self.preview_token = 0
         self.preview_dialog = None
         self.preview_fallback_dialog = None
-        self.preview_ready_file = None
-        self.preview_started_at = 0.0
-        self.preview_fallback_file = None
         self.clip_checkbox_vars = {}
         self.clip_vars = []
         self.saved_matches = {}
@@ -809,8 +806,6 @@ class Scenepackie:
         """Stop an abandoned preview without asking about an unrelated clip."""
         self.preview_token += 1
         self.preview_request = None
-        self.preview_ready_file = None
-        self.preview_fallback_file = None
         player = self.preview_process
         self.preview_process = None
         if player is not None and player.poll() is None:
@@ -832,7 +827,7 @@ class Scenepackie:
                 pass
             self.preview_fallback_dialog = None
 
-    def _launch_preview(self, command, clip, label, token, ready_file=None, fallback_file=None):
+    def _launch_preview(self, command, clip, label, token):
         if token != self.preview_token or self.page not in ("clips", "tv_clips"):
             return
         try:
@@ -844,9 +839,6 @@ class Scenepackie:
             messagebox.showerror("Couldn't preview clip", str(exc))
             return
         self.preview_request = (token, clip, label)
-        self.preview_ready_file = Path(ready_file) if ready_file else None
-        self.preview_fallback_file = fallback_file
-        self.preview_started_at = time.monotonic()
         self.status.configure(text=f"Watching {label}")
 
     def preview_clip(self, clip, source=None, label=None):
@@ -875,59 +867,40 @@ class Scenepackie:
             clip, label, token)
 
     def _poll_preview(self):
-        """Wait for the player to finish; recover through QuickTime if Mac launch fails."""
+        """Windows player can report its own exit; QuickTime uses the review button."""
         player = self.preview_process
         pending = self.preview_request
         if player is None or pending is None:
             return
-        token, clip, label = pending
-        ready_file = getattr(self, "preview_ready_file", None)
         status = player.poll()
         if status is None:
-            # A macOS application may be blocked from launching even when the
-            # "open" command stays alive. Never leave the editor stuck.
-            if (ready_file is not None and not ready_file.is_file()
-                    and time.monotonic() - self.preview_started_at > 18):
-                try:
-                    player.terminate()
-                except OSError:
-                    pass
-                self.preview_process = None
-                self._fallback_to_quicktime(
-                    token, clip, label,
-                    "The native player didn't start. Opening the clip in QuickTime instead.")
             return
-
         self.preview_process = None
         self.preview_request = None
+        token, clip, label = pending
         if token != self.preview_token or self.page not in ("clips", "tv_clips"):
-            return
-        if ready_file is not None and (status != 0 or not ready_file.is_file()):
-            self._fallback_to_quicktime(
-                token, clip, label,
-                "The native player couldn't open this preview. Using QuickTime instead.")
             return
         if status != 0:
             self.status.configure(text="preview couldn't play")
             messagebox.showerror("Preview unavailable", f"{label} couldn't play. Please try again.")
             return
-        if not any(item is clip for item in self.clips):
-            return
-        self._ask_preview_choice(clip, label)
+        if any(item is clip for item in self.clips):
+            self._ask_preview_choice(clip, label)
 
-    def _fallback_to_quicktime(self, token, clip, label, reason):
-        """Always preserve the working Mac preview path when the native helper fails."""
+    def _open_quicktime_preview(self, token, clip, label, path):
+        """Open Mac clips directly in QuickTime, with no helper or launch timeout.
+
+        macOS does not expose another application's close event here, so the
+        user clicks Review clip on returning to Scenepackie to pick Yes or No.
+        """
         if token != self.preview_token or self.page not in ("clips", "tv_clips"):
             return
-        path = self.preview_fallback_file
-        self.preview_request = None
-        self.preview_ready_file = None
-        if not path:
-            messagebox.showerror("Preview unavailable", reason)
+        if not any(item is clip for item in self.clips):
             return
+        self.preview_request = None
         try:
-            subprocess.Popen(["open", str(path)], stdout=subprocess.DEVNULL,
-                             stderr=subprocess.DEVNULL)
+            subprocess.Popen(["open", "-a", "QuickTime Player", str(path)],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError as exc:
             messagebox.showerror("Preview unavailable", str(exc))
             return
@@ -943,8 +916,8 @@ class Scenepackie:
         self._label(body, "preview opened in QuickTime", size=16,
                     bold=True, color=BROWN).pack(anchor="w")
         self._label(body, label, size=11, color=MUTED).pack(anchor="w", pady=(6, 4))
-        self._label(body, "Watch the clip, then return here and click Review clip. "
-                    "You'll still get the Yes / No choice.",
+        self._label(body, "After watching, return here and choose Review clip. "
+                    "Your Yes / No decision will save automatically.",
                     size=10, color=MUTED, justify="left",
                     wraplength=370).pack(anchor="w", pady=(0, 13))
         buttons = tk.Frame(body, bg=PAPER)
@@ -1172,25 +1145,7 @@ class Scenepackie:
                 elif event == "preview_ready":
                     token, clip, label, path = payload
                     if token == self.preview_token and self.page in ("clips", "tv_clips"):
-                        # PyInstaller's macOS layout keeps nested app bundles in
-                        # Contents/Helpers (not its symlink-managed data folders).
-                        app_bundle = (Path(sys.executable).resolve().parent.parent /
-                                      "Helpers" / "ScenepackiePreview.app")
-                        if not app_bundle.is_dir():
-                            app_bundle = resource_path("bin/ScenepackiePreview.app")
-                        executable = app_bundle / "Contents" / "MacOS" / "ScenepackiePreview"
-                        if executable.is_file():
-                            import uuid
-                            ready = Path(tempfile.gettempdir()) / f"scenepackie-ready-{uuid.uuid4().hex}.txt"
-                            self._launch_preview(
-                                ["open", "-n", "-W", "-a", str(app_bundle),
-                                 "--args", path, str(ready)],
-                                clip, label, token, ready_file=ready, fallback_file=path)
-                        else:
-                            self.preview_fallback_file = path
-                            self._fallback_to_quicktime(
-                                token, clip, label,
-                                "The native player wasn't included in this build.")
+                        self._open_quicktime_preview(token, clip, label, path)
                 elif event == "preview_error":
                     token, reason = payload
                     if token == self.preview_token and self.page in ("clips", "tv_clips"):
