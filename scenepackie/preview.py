@@ -16,10 +16,10 @@ def preview_args(ffmpeg: str, source: str, clip: Clip, output: Path) -> list[str
         raise ValueError("The selected clip has no playable duration.")
     return [
         ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-        "-i", source, "-ss", f"{clip.start:.3f}", "-t", f"{clip.duration:.3f}",
+        "-ss", f"{clip.start:.3f}", "-i", source, "-t", f"{clip.duration:.3f}",
         "-map", "0:v:0", "-map", "0:a:0?",
         "-vf", "scale=1280:720:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=30,format=yuv420p",
-        "-c:v", "libx264", "-preset", "veryfast", "-crf", "22",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "22",
         "-profile:v", "baseline", "-level:v", "3.1", "-tag:v", "avc1",
         "-pix_fmt", "yuv420p",
         "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2",
