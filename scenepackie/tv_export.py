@@ -63,12 +63,14 @@ def export_tv(root: str, episodes: list[Episode], state: dict, destination: str,
     all_paths: list[Path] = []
     season_paths: dict[int, list[Path]] = {number: [] for number in seasons}
     records = []
+    episode_counts = {}
     for index, (episode, clip) in enumerate(selected, 1):
         if cancel.is_set():
             raise Cancelled()
         folder = output_dir / f"Season {episode.season}"
         folder.mkdir(parents=True, exist_ok=True)
-        episode_index = len([r for r in records if r["episode"] == episode.label]) + 1
+        episode_counts[episode.label] = episode_counts.get(episode.label, 0) + 1
+        episode_index = episode_counts[episode.label]
         name = (f"clip_{episode.label}_{episode_index:03d}_"
                 f"{clock(clip.start).replace(':', '-')}.mp4")
         target = folder / name
