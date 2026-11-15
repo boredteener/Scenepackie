@@ -39,7 +39,8 @@ def read_animation(source: str) -> tuple[list[bytes], list[Clip] | None] | None:
         else:
             if not isinstance(rows, list) or len(rows) > 25000:
                 return None
-            clips = [Clip(float(v["start"]), float(v["end"]), bool(v["keep"])) for v in rows]
+            clips = [Clip(float(v["start"]), float(v["end"]), bool(v["keep"]),
+                          bool(v.get("rejected", False)) and not bool(v["keep"])) for v in rows]
             if any(not (0 <= clip.start < clip.end < 10000000) for clip in clips):
                 return None
         return refs, clips
@@ -55,7 +56,8 @@ def save_animation(source: str, refs: list[bytes], clips: list[Clip] | None = No
         "source": identity(source),
         "references": [base64.b64encode(ref).decode("ascii") for ref in refs],
         "clips": None if clips is None else [
-            {"start": clip.start, "end": clip.end, "keep": clip.keep} for clip in clips
+            {"start": clip.start, "end": clip.end, "keep": clip.keep,
+             "rejected": clip.rejected and not clip.keep} for clip in clips
         ],
     }
     target = cache_path(source)
