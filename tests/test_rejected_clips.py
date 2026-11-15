@@ -45,7 +45,7 @@ class TestRejectedPreview(unittest.TestCase):
     def test_normal_unchecked_clip_has_no_rejection_warning(self):
         app, clip = self.app(Clip(5, 8, keep=False))
         self.assertFalse(clip.rejected)
-        with patch("app.messagebox.showinfo") as info:
+        with patch("app.sys.platform", "win32"), patch("app.messagebox.showinfo") as info:
             app._launch_preview = Mock()
             app.preview_clip(clip, "movie.mp4", "Clip 003")
         info.assert_not_called()
@@ -54,7 +54,7 @@ class TestRejectedPreview(unittest.TestCase):
     def test_replaying_declined_clip_warns_but_can_still_play(self):
         app, clip = self.app(Clip(5, 8, keep=False, rejected=True))
         app._launch_preview = Mock()
-        with patch("app.messagebox.showinfo") as info:
+        with patch("app.sys.platform", "win32"), patch("app.messagebox.showinfo") as info:
             app.preview_clip(clip, "movie.mp4", "Clip 003")
         info.assert_called_once()
         self.assertIn("you said no to this clip", str(info.call_args))
