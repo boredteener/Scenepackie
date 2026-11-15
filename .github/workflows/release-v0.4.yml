@@ -5,7 +5,6 @@ on:
   push:
     branches: [main]
     paths:
-      - '.github/workflows/release-v0.4.yml'
       - 'scripts/build_icons.py'
       - 'tests/test_preview.py'
       - 'tests/test_animation.py'
@@ -52,9 +51,7 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
-          swiftc native/mac_preview.swift -o native/ScenepackiePreview
-          test -x native/ScenepackiePreview
-          pyinstaller --noconfirm --clean --onedir --windowed --name Scenepackie --icon build_icons/Scenepackie.icns --add-data "build_icons/icon.png:assets" --add-binary "native/ScenepackiePreview:bin" --collect-all imageio_ffmpeg --add-data "models:models" app.py
+          pyinstaller --noconfirm --clean --onedir --windowed --name Scenepackie --icon build_icons/Scenepackie.icns --add-data "build_icons/icon.png:assets" --collect-all imageio_ffmpeg --add-data "models:models" app.py
           ditto -c -k --keepParent dist/Scenepackie.app "Scenepackie-v0.4-${{ matrix.platform }}.zip"
       - name: Upload build
         uses: actions/upload-artifact@v4
