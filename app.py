@@ -582,7 +582,8 @@ class Scenepackie:
         rows = {episode.label: [] for episode in self.tv_episodes}
         for episode, clip in self.tv_entries:
             rows[episode.label].append({
-                "start": clip.start, "end": clip.end, "keep": clip.keep})
+                "start": clip.start, "end": clip.end, "keep": clip.keep,
+                "rejected": clip.rejected and not clip.keep})
         self.tv_state["clips"] = rows
         self._save_safely(lambda: save_state(
             self.tv_root, self.tv_episodes, self.tv_kind.get(), self.tv_state))
@@ -848,6 +849,14 @@ class Scenepackie:
         self._stop_preview()
         if clip.duration <= 0:
             return
+        # Only an explicit No sets this marker. An ordinary unchecked clip
+        # should continue through the regular Yes / No workflow.
+        if clip.rejected and not clip.keep:
+            messagebox.showinfo(
+                "Previously declined clip",
+                f"{label}: you said no to this clip.\n\n"
+                "You can preview it again, but you'll need to manually check "
+                "its box to add it to your scenepack.")
         token = self.preview_token
         self.preview_request = (token, clip, label)
         if sys.platform == "darwin":
@@ -884,7 +893,7 @@ class Scenepackie:
             self.status.configure(text="preview couldn't play")
             messagebox.showerror("Preview unavailable", f"{label} couldn't play. Please try again.")
             return
-        if any(item is clip for item in self.clips):
+        if any(item is clip for item in self.clips) and not clip.rejected:
             self._ask_preview_choice(clip, label)
 
     def _open_quicktime_preview(self, token, clip, label, path):
@@ -905,6 +914,10 @@ class Scenepackie:
             messagebox.showerror("Preview unavailable", str(exc))
             return
         self.status.configure(text=f"Playing {label} in QuickTime")
+        if clip.rejected and not clip.keep:
+            # Rejected clips may still be replayed, but only a manual checkbox
+            # action may add them again.
+            return
         dialog = tk.Toplevel(self.root)
         self.preview_fallback_dialog = dialog
         dialog.title("scenepackie · preview")
@@ -983,7 +996,12 @@ class Scenepackie:
             return
         if not any(item is clip for item in self.clips):
             return
+        if choice and clip.rejected and not clip.keep:
+            # A prior No cannot be reversed through another review dialog.
+            # The editor must explicitly check the clip in the clip list.
+            return
         clip.keep = bool(choice)
+        clip.rejected = not bool(choice)
         checkbox = self.clip_checkbox_vars.get(id(clip))
         if checkbox is not None:
             checkbox.set(clip.keep)
@@ -995,11 +1013,15 @@ class Scenepackie:
         if self.tv_active:
             for clip in self.clips:
                 clip.keep = keep
+                if keep:
+                    clip.rejected = False
             for var in self.clip_vars:
                 var.set(keep)
         else:
             for clip, var in zip(self.clips, self.clip_vars):
                 clip.keep = keep
+                if keep:
+                    clip.rejected = False
                 var.set(keep)
         self._update_selected()
         self._save_selection()
@@ -1096,6 +1118,9 @@ class Scenepackie:
             self.clip_checkbox_vars[id(clip)] = var
             def change(value=var, item=clip):
                 item.keep = value.get()
+                if item.keep:
+                    # Checking the clip is the explicit way to reverse No.
+                    item.rejected = False
                 self._update_selected()
                 self._save_selection()
             row = tk.Frame(inner, bg=CREAM if idx % 2 == 0 else PAPER, padx=10, pady=9)
