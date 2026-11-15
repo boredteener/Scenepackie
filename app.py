@@ -65,6 +65,10 @@ class Scenepackie:
         self.photos: list[ImageTk.PhotoImage] = []
         self.make_zip = tk.BooleanVar(value=True)
         self.preview_process = None
+        self.preview_request = None
+        self.preview_token = 0
+        self.preview_dialog = None
+        self.clip_checkbox_vars = {}
         self.clip_vars = []
         self.saved_matches = {}
         self.video_kind = tk.StringVar(value="live")
@@ -141,6 +145,7 @@ class Scenepackie:
             self.root.after_cancel(self.anim_after)
             self.anim_after = None
         self._stop_preview()
+        self.clip_checkbox_vars = {}
         self.photos.clear()
         for widget in self.body.winfo_children():
             widget.destroy()
@@ -797,36 +802,139 @@ class Scenepackie:
         self.show_clips()
 
     def _stop_preview(self):
+        """Stop an abandoned preview without asking about an unrelated clip."""
+        self.preview_token += 1
+        self.preview_request = None
         player = self.preview_process
         self.preview_process = None
         if player is not None and player.poll() is None:
-            player.terminate()
+            try:
+                player.terminate()
+            except OSError:
+                pass
+        if self.preview_dialog is not None:
+            try:
+                self.preview_dialog.destroy()
+            except tk.TclError:
+                pass
+            self.preview_dialog = None
 
-    def preview_clip(self, clip, source=None):
-        source = source or self.source
-        self._stop_preview()
-        if clip.duration <= 0:
-            return
-        if sys.platform == "darwin":
-            def playback():
-                try:
-                    target = create_mac_preview(source, clip)
-                    subprocess.Popen(["open", str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    self.root.after(0, lambda: self.status.configure(text="Preview opened"))
-                except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
-                    self.root.after(0, lambda message=str(exc): messagebox.showerror("Preview unavailable", message))
-            threading.Thread(target=playback, daemon=True).start()
-            self.status.configure(text="Preparing clip preview...")
+    def _launch_preview(self, command, clip, label, token):
+        if token != self.preview_token or self.page not in ("clips", "tv_clips"):
             return
         try:
             self.preview_process = subprocess.Popen(
-                [binary("ffplay"), "-loglevel", "error", "-autoexit",
-                 "-window_title", "scenepackie · clip preview",
-                 "-ss", f"{clip.start:.3f}", "-t", f"{clip.duration:.3f}", "-i", source],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 creationflags=creation_flags())
         except OSError as exc:
+            self.preview_request = None
             messagebox.showerror("Couldn't preview clip", str(exc))
+            return
+        self.preview_request = (token, clip, label)
+        self.status.configure(text=f"Watching {label}")
+
+    def preview_clip(self, clip, source=None, label=None):
+        """Preview one specific clip and ask to keep it when playback exits."""
+        source = source or self.source
+        label = label or "this clip"
+        self._stop_preview()
+        if clip.duration <= 0:
+            return
+        token = self.preview_token
+        self.preview_request = (token, clip, label)
+        if sys.platform == "darwin":
+            def prepare():
+                try:
+                    target = create_mac_preview(source, clip)
+                    self.queue.put(("preview_ready", (token, clip, label, str(target))))
+                except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+                    self.queue.put(("preview_error", (token, str(exc))))
+            threading.Thread(target=prepare, daemon=True).start()
+            self.status.configure(text=f"Preparing {label}...")
+            return
+        self._launch_preview(
+            [binary("ffplay"), "-loglevel", "error", "-autoexit",
+             "-window_title", "scenepackie · clip preview",
+             "-ss", f"{clip.start:.3f}", "-t", f"{clip.duration:.3f}", "-i", source],
+            clip, label, token)
+
+    def _poll_preview(self):
+        """Called on Tk's main thread; works for closing and finishing playback."""
+        player = self.preview_process
+        pending = self.preview_request
+        if player is None or pending is None:
+            return
+        status = player.poll()
+        if status is None:
+            return
+        self.preview_process = None
+        self.preview_request = None
+        token, clip, label = pending
+        if token != self.preview_token or self.page not in ("clips", "tv_clips"):
+            return
+        if status != 0:
+            self.status.configure(text="preview couldn't play")
+            messagebox.showerror("Preview unavailable", f"{label} couldn't play. Please try again.")
+            return
+        if not any(item is clip for item in self.clips):
+            return
+        self._ask_preview_choice(clip, label)
+
+    def _ask_preview_choice(self, clip, label):
+        """Show the same warm, minimal Yes/No prompt on Windows and macOS."""
+        if self.preview_dialog is not None:
+            self.preview_dialog.destroy()
+        dialog = tk.Toplevel(self.root)
+        self.preview_dialog = dialog
+        dialog.title("scenepackie · clip review")
+        dialog.configure(bg=PAPER)
+        dialog.resizable(False, False)
+        dialog.transient(self.root)
+        dialog.geometry("410x202")
+        dialog.protocol("WM_DELETE_WINDOW", lambda: self._finish_preview_choice(None, clip))
+        dialog.bind("<Escape>", lambda _: self._finish_preview_choice(None, clip))
+        body = tk.Frame(dialog, bg=PAPER, padx=28, pady=20)
+        body.pack(fill="both", expand=True)
+        self._label(body, "do you want this clip?", size=17, bold=True, color=BROWN).pack(anchor="w")
+        self._label(body, label, size=11, color=MUTED).pack(anchor="w", pady=(7, 5))
+        self._label(body, "Yes keeps it. No removes it from your scenepack.",
+                    size=10, color=MUTED).pack(anchor="w")
+        buttons = tk.Frame(body, bg=PAPER)
+        buttons.pack(anchor="e", pady=(20, 0))
+        self._button(buttons, "No", lambda: self._finish_preview_choice(False, clip),
+                     primary=False, padx=24, pady=8).pack(side="left", padx=(0, 8))
+        yes = self._button(buttons, "Yes", lambda: self._finish_preview_choice(True, clip),
+                           padx=24, pady=8)
+        yes.pack(side="left")
+        dialog.bind("<Return>", lambda _: self._finish_preview_choice(True, clip))
+        dialog.update_idletasks()
+        left = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+        top = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 2
+        dialog.geometry(f"+{max(0, left)}+{max(0, top)}")
+        dialog.grab_set()
+        dialog.lift()
+        yes.focus_set()
+
+    def _finish_preview_choice(self, choice, clip):
+        dialog = self.preview_dialog
+        self.preview_dialog = None
+        if dialog is not None:
+            try:
+                dialog.grab_release()
+                dialog.destroy()
+            except tk.TclError:
+                pass
+        if choice is None or self.page not in ("clips", "tv_clips"):
+            return
+        if not any(item is clip for item in self.clips):
+            return
+        clip.keep = bool(choice)
+        checkbox = self.clip_checkbox_vars.get(id(clip))
+        if checkbox is not None:
+            checkbox.set(clip.keep)
+        self._update_selected()
+        self._save_selection()
+        self.status.configure(text="clip selected" if choice else "clip removed")
 
     def set_all_clips(self, keep):
         if self.tv_active:
@@ -913,6 +1021,7 @@ class Scenepackie:
                          state="normal" if self.tv_page_index > 0 else "disabled").pack(side="right", padx=(0, 7))
 
         self.clip_vars = []
+        self.clip_checkbox_vars = {}
         listing = tk.Frame(box, bg=PAPER)
         listing.pack(fill="both", expand=True)
         canvas = tk.Canvas(listing, bg=PAPER, highlightthickness=0)
@@ -929,6 +1038,7 @@ class Scenepackie:
             ep = self.tv_entries[idx][0] if self.tv_active else None
             var = tk.BooleanVar(value=clip.keep)
             self.clip_vars.append(var)
+            self.clip_checkbox_vars[id(clip)] = var
             def change(value=var, item=clip):
                 item.keep = value.get()
                 self._update_selected()
@@ -940,7 +1050,8 @@ class Scenepackie:
                            bg=row.cget("bg"), fg=DARK, activebackground=row.cget("bg"),
                            font=("Segoe UI", 10, "bold"), selectcolor=PAPER).pack(side="left")
             source = ep.path if ep else self.source
-            self._button(row, "▶ Preview", lambda item=clip, path=source: self.preview_clip(item, path),
+            self._button(row, "▶ Preview",
+                         lambda item=clip, path=source, name=label: self.preview_clip(item, path, name),
                          primary=False, padx=9, pady=5).pack(side="right", padx=(10, 0))
             self._label(row, f"{clock(clip.start)} – {clock(clip.end)}  ({int(clip.duration)}s)",
                         color=MUTED, size=10).pack(side="right")
@@ -976,6 +1087,21 @@ class Scenepackie:
                     if self.working:
                         self.job_stage = label
                         self.job_fraction = max(self.job_fraction, max(0.0, min(1.0, fraction)))
+                elif event == "preview_ready":
+                    token, clip, label, path = payload
+                    if token == self.preview_token and self.page in ("clips", "tv_clips"):
+                        executable = resource_path("bin/ScenepackiePreview")
+                        if executable.is_file():
+                            self._launch_preview([str(executable), path], clip, label, token)
+                        else:
+                            self.preview_request = None
+                            messagebox.showerror("Preview unavailable",
+                                                 "The Mac preview player wasn't included in this build.")
+                elif event == "preview_error":
+                    token, reason = payload
+                    if token == self.preview_token and self.page in ("clips", "tv_clips"):
+                        self.preview_request = None
+                        messagebox.showerror("Preview unavailable", reason)
                 else:
                     self.working = False
                     if event == "done":
@@ -992,6 +1118,7 @@ class Scenepackie:
         except Empty:
             pass
         self._update_processing()
+        self._poll_preview()
         self.root.after(100, self._poll)
 
 
