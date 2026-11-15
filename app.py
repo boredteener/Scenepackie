@@ -795,14 +795,15 @@ class Scenepackie:
         if player is not None and player.poll() is None:
             player.terminate()
 
-    def preview_clip(self, clip):
+    def preview_clip(self, clip, source=None):
+        source = source or self.source
         self._stop_preview()
         if clip.duration <= 0:
             return
         if sys.platform == "darwin":
             def playback():
                 try:
-                    target = create_mac_preview(self.source, clip)
+                    target = create_mac_preview(source, clip)
                     subprocess.Popen(["open", str(target)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                     self.root.after(0, lambda: self.status.configure(text="Preview opened"))
                 except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
@@ -814,16 +815,22 @@ class Scenepackie:
             self.preview_process = subprocess.Popen(
                 [binary("ffplay"), "-loglevel", "error", "-autoexit",
                  "-window_title", "scenepackie · clip preview",
-                 "-ss", f"{clip.start:.3f}", "-t", f"{clip.duration:.3f}", "-i", self.source],
+                 "-ss", f"{clip.start:.3f}", "-t", f"{clip.duration:.3f}", "-i", source],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 creationflags=creation_flags())
         except OSError as exc:
             messagebox.showerror("Couldn't preview clip", str(exc))
 
     def set_all_clips(self, keep):
-        for clip, var in zip(self.clips, self.clip_vars):
-            clip.keep = keep
-            var.set(keep)
+        if self.tv_active:
+            for clip in self.clips:
+                clip.keep = keep
+            for var in self.clip_vars:
+                var.set(keep)
+        else:
+            for clip, var in zip(self.clips, self.clip_vars):
+                clip.keep = keep
+                var.set(keep)
         self._update_selected()
         self._save_selection()
 
@@ -832,23 +839,72 @@ class Scenepackie:
         if hasattr(self, "selected_label") and self.selected_label.winfo_exists():
             self.selected_label.configure(text=f"{count} of {len(self.clips)} clips selected")
 
+    def _tv_filter_changed(self, _event=None):
+        self.tv_page_index = 0
+        self.show_clips()
+
+    def _tv_change_page(self, delta):
+        self.tv_page_index += delta
+        self.show_clips()
+
     def show_clips(self):
-        self.page = "clips"
+        self.page = "tv_clips" if self.tv_active else "clips"
         self._set_step(2)
         self._clear()
-        box = self._panel(22)
+        box = self._panel(17 if self.tv_active else 22)
         self._label(box, "your clips are ready to review", size=19, bold=True).pack(anchor="w")
-        self._label(box, f"{len(self.clips)} clips found  ·  uncheck anything you don't want", size=11, color=MUTED).pack(anchor="w", pady=(3, 12))
+        self._label(box, f"{len(self.clips)} clips found  ·  uncheck anything you don't want",
+                    size=11, color=MUTED).pack(anchor="w", pady=(3, 12))
+        back_action = (self.show_animation_picker if self.tv_active and self.tv_kind.get() == "animated"
+                       else self.show_faces if self.tv_active
+                       else self.show_animation_picker if self.video_kind.get() == "animated"
+                       else self.show_faces)
         if not self.clips:
-            self._label(box, "No matches found. Try another face from the character list.", color=MUTED).pack(anchor="w", pady=15)
-            self._button(box, "Back to characters", self.show_animation_picker if self.video_kind.get() == "animated" else self.show_faces, primary=False).pack(anchor="w")
+            self._label(box, "No matching scenes found. Try another character or a clearer reference.",
+                        color=MUTED).pack(anchor="w", pady=15)
+            self._button(box, "Back to characters", back_action, primary=False).pack(anchor="w")
             return
+
         tools = tk.Frame(box, bg=PAPER)
-        tools.pack(fill="x", pady=(0, 10))
+        tools.pack(fill="x", pady=(0, 9))
         self.selected_label = self._label(tools, "", size=10, color=MUTED)
         self.selected_label.pack(side="left")
-        self._button(tools, "Deselect all", lambda: self.set_all_clips(False), primary=False, padx=10, pady=5).pack(side="right")
-        self._button(tools, "Select all", lambda: self.set_all_clips(True), primary=False, padx=10, pady=5).pack(side="right", padx=(0, 8))
+        self._button(tools, "Deselect all", lambda: self.set_all_clips(False),
+                     primary=False, padx=10, pady=5).pack(side="right")
+        self._button(tools, "Select all", lambda: self.set_all_clips(True),
+                     primary=False, padx=10, pady=5).pack(side="right", padx=(0, 8))
+
+        display_indices = list(range(len(self.clips)))
+        if self.tv_active:
+            seasons = sorted({episode.season for episode in self.tv_episodes})
+            choices = ["All seasons"] + [f"Season {number}" for number in seasons]
+            filter_row = tk.Frame(box, bg=PAPER)
+            filter_row.pack(fill="x", pady=(0, 8))
+            self._label(filter_row, "Show:", size=10, color=MUTED).pack(side="left", padx=(0, 7))
+            selector = ttk.Combobox(filter_row, values=choices, state="readonly",
+                                     textvariable=self.tv_view_season, width=14)
+            selector.pack(side="left")
+            selector.bind("<<ComboboxSelected>>", self._tv_filter_changed)
+            selected_season = self.tv_view_season.get()
+            if selected_season != "All seasons":
+                display_indices = [
+                    index for index, (episode, _) in enumerate(self.tv_entries)
+                    if f"Season {episode.season}" == selected_season]
+            page_size = 60
+            max_page = max(0, (len(display_indices) - 1) // page_size)
+            self.tv_page_index = min(max(0, self.tv_page_index), max_page)
+            first = self.tv_page_index * page_size
+            display_indices = display_indices[first:first + page_size]
+            self.tv_display_indexes = display_indices
+            self._label(filter_row, f"Page {self.tv_page_index+1} of {max_page+1}",
+                        size=10, color=MUTED).pack(side="left", padx=(13, 0))
+            self._button(filter_row, "Next", lambda: self._tv_change_page(1),
+                         primary=False, padx=8, pady=4,
+                         state="normal" if self.tv_page_index < max_page else "disabled").pack(side="right")
+            self._button(filter_row, "Previous", lambda: self._tv_change_page(-1),
+                         primary=False, padx=8, pady=4,
+                         state="normal" if self.tv_page_index > 0 else "disabled").pack(side="right", padx=(0, 7))
+
         self.clip_vars = []
         listing = tk.Frame(box, bg=PAPER)
         listing.pack(fill="both", expand=True)
@@ -861,26 +917,39 @@ class Scenepackie:
         canvas.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side="right", fill="y")
         canvas.pack(side="left", fill="both", expand=True)
-        for i, clip in enumerate(self.clips, 1):
+        for idx in display_indices:
+            clip = self.clips[idx]
+            ep = self.tv_entries[idx][0] if self.tv_active else None
             var = tk.BooleanVar(value=clip.keep)
             self.clip_vars.append(var)
             def change(value=var, item=clip):
                 item.keep = value.get()
                 self._update_selected()
                 self._save_selection()
-            row = tk.Frame(inner, bg=CREAM if i % 2 else PAPER, padx=10, pady=9)
+            row = tk.Frame(inner, bg=CREAM if idx % 2 == 0 else PAPER, padx=10, pady=9)
             row.pack(fill="x", pady=(0, 2))
-            tk.Checkbutton(row, text=f"Clip {i:03d}", variable=var, command=change, bg=row.cget("bg"), fg=DARK, activebackground=row.cget("bg"), font=("Segoe UI", 10, "bold"), selectcolor=PAPER).pack(side="left")
-            self._button(row, "▶ Preview", lambda item=clip: self.preview_clip(item), primary=False, padx=9, pady=5).pack(side="right", padx=(10, 0))
-            self._label(row, f"{clock(clip.start)}  –  {clock(clip.end)}     ({int(clip.duration)}s)", color=MUTED, size=10).pack(side="right")
+            label = f"{ep.label} · Clip {idx+1:03d}" if ep else f"Clip {idx+1:03d}"
+            tk.Checkbutton(row, text=label, variable=var, command=change,
+                           bg=row.cget("bg"), fg=DARK, activebackground=row.cget("bg"),
+                           font=("Segoe UI", 10, "bold"), selectcolor=PAPER).pack(side="left")
+            source = ep.path if ep else self.source
+            self._button(row, "▶ Preview", lambda item=clip, path=source: self.preview_clip(item, path),
+                         primary=False, padx=9, pady=5).pack(side="right", padx=(10, 0))
+            self._label(row, f"{clock(clip.start)} – {clock(clip.end)}  ({int(clip.duration)}s)",
+                        color=MUTED, size=10).pack(side="right")
         self._update_selected()
         controls = tk.Frame(box, bg=PAPER)
-        controls.pack(fill="x", pady=(16, 0))
-        tk.Checkbutton(controls, text="ZIP everything (individual clips + full scenepack)", variable=self.make_zip, bg=PAPER, fg=DARK, activebackground=PAPER, selectcolor=PAPER, font=("Segoe UI", 10)).pack(side="left")
+        controls.pack(fill="x", pady=(14, 0))
+        tk.Checkbutton(controls, text="ZIP everything (individual clips + full scenepack)",
+                       variable=self.make_zip, bg=PAPER, fg=DARK, activebackground=PAPER,
+                       selectcolor=PAPER, font=("Segoe UI", 10)).pack(side="left")
         self._button(controls, "Export clips   →", self.export).pack(side="right")
-        self._button(controls, "Back", self.show_animation_picker if self.video_kind.get() == "animated" else self.show_faces, primary=False, padx=15).pack(side="right", padx=(0, 10))
+        self._button(controls, "Back", back_action, primary=False, padx=15).pack(side="right", padx=(0, 10))
 
     def export(self):
+        if self.tv_active:
+            self._tv_export()
+            return
         folder = filedialog.askdirectory(title="Where should your scenepack go?")
         if not folder:
             return
