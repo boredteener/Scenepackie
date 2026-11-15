@@ -1,6 +1,7 @@
 """Scenepackie desktop application — built for editors, without extra setup."""
 from __future__ import annotations
 
+import base64
 from io import BytesIO
 from pathlib import Path
 import subprocess
@@ -23,6 +24,9 @@ from scenepackie.cache import read_snapshot, save_characters, save_clips, clear_
 from scenepackie.preview import create_mac_preview
 from scenepackie.animation import AnimationMatcher, encode_reference
 from scenepackie.animation_cache import read_animation, save_animation, cache_path as animation_cache_path
+from scenepackie.tv import (find_episodes, read_state, save_state, pack_faces, unpack_faces, blank_state,
+                           discover_cast, scan_episodes, selected_entries, pack_clips)
+from scenepackie.tv_export import export_tv
 
 
 CREAM = "#F8F5EF"
@@ -64,6 +68,17 @@ class Scenepackie:
         self.clip_vars = []
         self.saved_matches = {}
         self.video_kind = tk.StringVar(value="live")
+        self.tv_kind = tk.StringVar(value="live")
+        self.tv_season_count = tk.StringVar(value="1")
+        self.tv_root = ""
+        self.tv_active = False
+        self.tv_episodes = []
+        self.tv_state = blank_state()
+        self.tv_entries = []
+        self.tv_view_season = tk.StringVar(value="All seasons")
+        self.tv_page_index = 0
+        self.tv_display_indexes = []
+        self.tv_reference_episode = tk.StringVar()
         self.animation_refs: list[bytes] = []
         self.animation_saved_clips = None
         self.animation_cache_loaded = False
@@ -150,11 +165,13 @@ class Scenepackie:
         modes = tk.Frame(box, bg=PAPER)
         modes.pack(anchor="w", pady=(0, 14))
         self._label(modes, "Video type:", size=10, color=MUTED).pack(side="left", padx=(0, 10))
-        for value, label in (("live", "Live action"), ("animated", "Animation (2D / 3D)")):
+        for value, label in (("live", "Live action"), ("animated", "Animation (2D / 3D)"), ("tv", "TV Shows")):
             tk.Radiobutton(modes, text=label, variable=self.video_kind, value=value,
                            bg=PAPER, fg=DARK, activebackground=PAPER, selectcolor=PAPER,
-                           font=("Segoe UI", 10), command=self.show_upload).pack(side="left", padx=(0, 14))
-        if self.source:
+                           font=("Segoe UI", 10), command=self._on_video_mode).pack(side="left", padx=(0, 14))
+        if self.video_kind.get() == "tv":
+            self._button(box, "Set up TV show   →", self.show_tv_setup).pack(anchor="w")
+        if self.source and self.video_kind.get() != "tv":
             self._label(box, Path(self.source).name, color=BROWN, size=12, bold=True, wraplength=650, justify="left").pack(anchor="w", pady=(0, 14))
             if self.video_kind.get() == "animated":
                 self._button(box, "Choose animated character   →", self.show_animation_picker).pack(anchor="w")
@@ -162,6 +179,15 @@ class Scenepackie:
                 self._button(box, "Find characters   →", self.discover).pack(anchor="w")
         self._label(box, "No account, uploads, or subscriptions needed.", color=MUTED, size=10).pack(anchor="w", pady=(28, 0))
         self._button(box, "Clear saved scans", self.clear_scans, primary=False, padx=12, pady=7).pack(anchor="w", pady=(12, 0))
+
+    def _on_video_mode(self):
+        if self.video_kind.get() == "tv":
+            self.show_tv_setup()
+            return
+        if self.tv_active:
+            self.source = ""
+            self.tv_active = False
+        self.show_upload()
 
     def pick_video(self):
         path = filedialog.askopenfilename(title="Choose a video", filetypes=[("Video files", "*.mp4 *.mkv *.mov *.avi *.m4v *.webm"), ("All files", "*.*")])
@@ -173,6 +199,7 @@ class Scenepackie:
             messagebox.showerror("Couldn't open video", str(exc))
             return
         self.source = path
+        self.tv_active = False
         self.groups = []
         self.clips = []
         self.saved_matches = {}
