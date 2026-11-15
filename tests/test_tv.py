@@ -1,5 +1,7 @@
 import json
 import os
+import subprocess
+import sys
 from pathlib import Path
 import tempfile
 import threading
@@ -105,6 +107,32 @@ class TVTests(unittest.TestCase):
         merged = combine_faces(existing, [FaceGroup(b"b", [vec], hits=3)])
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0].hits, 8)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Mac native video export check")
+    def test_real_tv_export_decodes_on_mac(self):
+        from scenepackie.core import binary
+        ffmpeg = binary("ffmpeg")
+        for episode in (self.episodes[0], self.episodes[2]):
+            subprocess.run([
+                ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+                "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24:duration=1.6",
+                "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=1.6",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                "-c:a", "aac", str(episode.path),
+            ], check=True, capture_output=True, timeout=40)
+        state = blank_state()
+        state["clips"]["S01E01"] = pack_clips([Clip(0.15, 1.10)])
+        state["clips"]["S02E01"] = pack_clips([Clip(0.25, 1.25)])
+        root = export_tv(str(self.show), self.episodes, state, str(self.root),
+                         False, threading.Event(), lambda *_: None)
+        produced = list(root.rglob("*.mp4"))
+        self.assertEqual(len(produced), 5)
+        for path in produced:
+            check = subprocess.run([
+                ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin",
+                "-i", str(path), "-frames:v", "1", "-f", "null", "-"
+            ], capture_output=True, timeout=30)
+            self.assertEqual(check.returncode, 0, f"{path.name}: {check.stderr.decode(errors='replace')}")
 
     def test_tv_exports_order_and_season_files(self):
         state = blank_state()
