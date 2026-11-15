@@ -88,6 +88,15 @@ class TestRejectedPreview(unittest.TestCase):
             app.preview_clip(clip, "movie.mp4", "Clip 003")
         info.assert_not_called()
 
+    def test_select_all_reverses_explicit_no(self):
+        app, clip = self.app(Clip(5, 8, keep=False, rejected=True))
+        app.tv_active = False
+        app.clip_vars = [Mock()]
+        app.set_all_clips(True)
+        self.assertTrue(clip.keep)
+        self.assertFalse(clip.rejected)
+        app.clip_vars[0].set.assert_called_once_with(True)
+
     def test_unchecking_without_no_does_not_mark_rejected(self):
         app, clip = self.app(Clip(5, 8, keep=True))
         app._manual_clip_selection(clip, False)
