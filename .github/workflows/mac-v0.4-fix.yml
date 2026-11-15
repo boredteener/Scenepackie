@@ -30,7 +30,10 @@ jobs:
       - run: python scripts/build_icons.py
       - name: Package Mac
         run: |
-          pyinstaller --noconfirm --clean --onedir --windowed --name Scenepackie --icon build_icons/Scenepackie.icns --add-data "build_icons/icon.png:assets" --collect-all imageio_ffmpeg --add-data "models:models" app.py
+          bash scripts/build_mac_preview.sh
+          pyinstaller --noconfirm --clean --onedir --windowed --name Scenepackie --icon build_icons/Scenepackie.icns --add-data "build_icons/icon.png:assets" --add-data "native/ScenepackiePreview.app:bin" --collect-all imageio_ffmpeg --add-data "models:models" app.py
+          find dist/Scenepackie.app -name ScenepackiePreview.app -print
+          test -n "$(find dist/Scenepackie.app -name ScenepackiePreview.app -print -quit)"
           ditto -c -k --keepParent dist/Scenepackie.app "Scenepackie-v0.4-${{ matrix.label }}.zip"
       - uses: actions/upload-artifact@v4
         with:
