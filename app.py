@@ -218,14 +218,30 @@ class Scenepackie:
             if stored:
                 self.animation_refs, self.animation_saved_clips = stored
             self.animation_cache_loaded = True
-        self.page = "animation"
+        self.page = "tv_animation" if self.tv_active else "animation"
         self._set_step(1)
         self._clear()
         box = self._panel(12)
         self._label(box, "choose your animated character", size=18, bold=True).pack(anchor="w")
         self._label(box, "Find a clear frame, then drag a tight box around the character (not the background).",
                     color=MUTED, size=10, wraplength=660, justify="left").pack(anchor="w", pady=(3, 8))
-        self.anim_canvas = tk.Canvas(box, width=560, height=218, bg=CREAM,
+        if self.tv_active:
+            self._label(box, "Choose an episode where the character is visible:",
+                        color=MUTED, size=10).pack(anchor="w", pady=(0, 2))
+            labels = [f"{episode.label} · {Path(episode.path).name}" for episode in self.tv_episodes]
+            if self.tv_reference_episode.get() not in labels:
+                self.tv_reference_episode.set(labels[0])
+            self.tv_reference_combo = ttk.Combobox(
+                box, values=labels, textvariable=self.tv_reference_episode,
+                state="readonly", width=59)
+            self.tv_reference_combo.pack(anchor="w", pady=(0, 7))
+            self.tv_reference_combo.bind("<<ComboboxSelected>>",
+                                         lambda _: self._tv_select_reference_episode())
+            ep_label = self.tv_reference_episode.get().split(" · ")[0]
+            self.source = next((ep.path for ep in self.tv_episodes if ep.label == ep_label),
+                               self.tv_episodes[0].path)
+        self.anim_canvas_height = 184 if self.tv_active else 218
+        self.anim_canvas = tk.Canvas(box, width=560, height=self.anim_canvas_height, bg=CREAM,
                                     highlightbackground=TAN, highlightthickness=1,
                                     cursor="crosshair")
         self.anim_canvas.pack(anchor="w")
@@ -248,9 +264,20 @@ class Scenepackie:
                      primary=False, padx=10, pady=8).pack(side="left", padx=(0, 7))
         self._button(buttons, "Find scenes   →", self._anim_find,
                      padx=12, pady=8).pack(side="right")
-        self._button(buttons, "Back", self.show_upload,
+        self._button(buttons, "Back", self.show_tv_setup if self.tv_active else self.show_upload,
                      primary=False, padx=10, pady=8).pack(side="right", padx=(0, 7))
         self._anim_update_ref_count()
+        self._anim_render_frame()
+
+    def _tv_select_reference_episode(self):
+        label = self.tv_reference_episode.get().split(" · ")[0]
+        episode = next((ep for ep in self.tv_episodes if ep.label == label), None)
+        if episode is None:
+            return
+        self.source = episode.path
+        duration, _ = video_info(self.source)
+        self.anim_seek.configure(to=max(0.05, duration - 0.05))
+        self.anim_seek.set(0)
         self._anim_render_frame()
 
     def _anim_update_ref_count(self):
@@ -267,7 +294,7 @@ class Scenepackie:
 
     def _anim_render_frame(self):
         self.anim_after = None
-        if self.page != "animation":
+        if self.page not in ("animation", "tv_animation"):
             return
         capture = cv2.VideoCapture(self.source)
         try:
@@ -279,16 +306,17 @@ class Scenepackie:
         self.anim_crop = None
         self.anim_frame = None
         if not ok:
-            self.anim_canvas.create_text(280, 110, text="Can't read this frame. Try another spot.",
+            self.anim_canvas.create_text(280, self.anim_canvas_height // 2,
+                                         text="Can't read this frame. Try another spot.",
                                          fill=BROWN, font=("Segoe UI", 11))
             return
         self.anim_frame = frame
         height, width = frame.shape[:2]
-        factor = min(560 / width, 218 / height)
+        factor = min(560 / width, self.anim_canvas_height / height)
         dw, dh = max(1, round(width * factor)), max(1, round(height * factor))
         picture = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)).resize((dw, dh), Image.Resampling.LANCZOS)
         self.anim_photo = ImageTk.PhotoImage(picture, master=self.root)
-        x, y = (560 - dw) // 2, (218 - dh) // 2
+        x, y = (560 - dw) // 2, (self.anim_canvas_height - dh) // 2
         self.anim_canvas.create_image(x, y, anchor="nw", image=self.anim_photo)
         self.anim_bounds = (x, y, dw, dh)
 
@@ -356,7 +384,14 @@ class Scenepackie:
             return
         self.animation_refs.append(image)
         self.animation_saved_clips = None
-        self._save_safely(lambda: save_animation(self.source, self.animation_refs))
+        if self.tv_active:
+            self.tv_state["references"] = [base64.b64encode(value).decode("ascii")
+                                            for value in self.animation_refs]
+            self.tv_state["clips"] = {}
+            self._save_safely(lambda: save_state(
+                self.tv_root, self.tv_episodes, self.tv_kind.get(), self.tv_state))
+        else:
+            self._save_safely(lambda: save_animation(self.source, self.animation_refs))
         self._anim_update_ref_count()
         self.anim_crop = None
         self.anim_canvas.delete("selection")
@@ -366,7 +401,13 @@ class Scenepackie:
             return
         self.animation_refs.pop()
         self.animation_saved_clips = None
-        if self.animation_refs:
+        if self.tv_active:
+            self.tv_state["references"] = [base64.b64encode(value).decode("ascii")
+                                            for value in self.animation_refs]
+            self.tv_state["clips"] = {}
+            self._save_safely(lambda: save_state(
+                self.tv_root, self.tv_episodes, self.tv_kind.get(), self.tv_state))
+        elif self.animation_refs:
             self._save_safely(lambda: save_animation(self.source, self.animation_refs))
         else:
             try:
@@ -378,6 +419,9 @@ class Scenepackie:
     def _anim_find(self):
         if not self.animation_refs:
             messagebox.showinfo("Choose a character", "Add at least one clear character view first.")
+            return
+        if self.tv_active:
+            self._tv_scan()
             return
         if self.animation_saved_clips is not None:
             self.clips = self.animation_saved_clips
