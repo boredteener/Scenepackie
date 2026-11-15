@@ -34,7 +34,7 @@ class Episode:
 
 
 def _sort_filename(p: Path):
-    return [int(x) if x.isdigit() else x.lower() for x in re.split(r"(\d+)", p.stem)]
+    return tuple((0, int(x)) if x.isdigit() else (1, x.lower()) for x in re.split(r"(\d+)", p.stem))
 
 
 def find_episodes(root: str, season_count: int) -> list[Episode]:
