@@ -394,6 +394,154 @@ class Scenepackie:
         self._save_selection()
         self.show_clips()
 
+    def show_tv_setup(self):
+        self.page = "tv_setup"
+        self._set_step(0)
+        self._clear()
+        box = self._panel(18)
+        self._label(box, "make a tv show scenepack.", size=20, bold=True).pack(anchor="w")
+        note = tk.Frame(box, bg=CREAM, padx=16, pady=13, highlightbackground=TAN, highlightthickness=1)
+        note.pack(fill="x", pady=(10, 13))
+        self._label(note, "before you start", size=12, color=BROWN, bold=True).pack(anchor="w")
+        self._label(note, "Put all episodes inside one show folder. Name the season folders exactly "
+                    "'Season 1', 'Season 2', and so on.", size=10, color=DARK,
+                    wraplength=610, justify="left").pack(anchor="w", pady=(4, 2))
+        self._label(note, "Example: My Show / Season 1 / Episode 01.mp4",
+                    size=10, color=MUTED).pack(anchor="w")
+        self._label(note, "Keep episodes numbered in order. Choose the main show folder, not an individual season.",
+                    size=10, color=MUTED, wraplength=610, justify="left").pack(anchor="w", pady=(2, 0))
+
+        options = tk.Frame(box, bg=PAPER)
+        options.pack(fill="x", pady=(0, 11))
+        self._label(options, "How many seasons?", size=11, bold=True).pack(side="left")
+        count = ttk.Combobox(options, values=[str(i) for i in range(1, 31)],
+                             textvariable=self.tv_season_count, state="readonly", width=5)
+        count.pack(side="left", padx=(12, 24))
+        self._label(options, "Show type:", size=11, bold=True).pack(side="left", padx=(0, 8))
+        for value, label in (("live", "Live action"), ("animated", "Animation")):
+            tk.Radiobutton(options, text=label, variable=self.tv_kind, value=value,
+                           bg=PAPER, fg=DARK, activebackground=PAPER, selectcolor=PAPER,
+                           font=("Segoe UI", 10)).pack(side="left", padx=(0, 9))
+
+        tile = tk.Frame(box, bg=CREAM, padx=17, pady=12, highlightbackground=TAN, highlightthickness=1)
+        tile.pack(fill="x", pady=(0, 9))
+        self._label(tile, "your TV show folder", size=11, color=BROWN, bold=True).pack(anchor="w")
+        folder = self.tv_root or "No folder selected"
+        self._label(tile, folder, color=MUTED, size=10,
+                    wraplength=580, justify="left").pack(anchor="w", pady=(3, 8))
+        self._button(tile, "Choose show folder", self._tv_pick_folder,
+                     padx=13, pady=7).pack(anchor="w")
+
+        controls = tk.Frame(box, bg=PAPER)
+        controls.pack(fill="x", pady=(5, 0))
+        self._button(controls, "Back", self.show_upload, primary=False,
+                     padx=15, pady=8).pack(side="left")
+        self._button(controls, "Continue   →", self._tv_start,
+                     padx=17, pady=8).pack(side="right")
+
+    def _tv_pick_folder(self):
+        folder = filedialog.askdirectory(title="Choose your TV show's main folder")
+        if folder:
+            self.tv_root = folder
+            self.show_tv_setup()
+
+    def _tv_start(self):
+        try:
+            self.tv_episodes = find_episodes(self.tv_root, int(self.tv_season_count.get()))
+        except (ValueError, OSError) as exc:
+            messagebox.showerror("Check season folders", str(exc))
+            return
+        self.tv_active = True
+        self.source = self.tv_episodes[0].path
+        self.tv_state = read_state(self.tv_root, self.tv_episodes, self.tv_kind.get())
+        self.tv_entries = []
+        self.tv_page_index = 0
+        self.tv_view_season.set("All seasons")
+        self.selection = None
+        if self.tv_kind.get() == "animated":
+            self.animation_cache_loaded = True
+            self.animation_saved_clips = None
+            try:
+                self.animation_refs = [base64.b64decode(value, validate=True)
+                                       for value in self.tv_state.get("references", [])]
+            except ValueError:
+                self.animation_refs = []
+            self.tv_reference_episode.set(self.tv_episodes[0].label)
+            self.show_animation_picker()
+            return
+        self.animation_refs = []
+        try:
+            self.groups = unpack_faces(self.tv_state.get("faces", []))
+        except (ValueError, KeyError, TypeError):
+            self.groups = []
+            self.tv_state = blank_state()
+        if self.groups:
+            self.show_faces()
+        else:
+            self._job(lambda cancel, progress:
+                      discover_cast(self.tv_episodes, cancel, progress),
+                      self._tv_found_cast, "Finding TV characters",
+                      "Checking episodes in season order. Finished episode scans are saved.")
+
+    def _tv_found_cast(self, groups):
+        self.groups = groups
+        self.tv_state["faces"] = pack_faces(groups)
+        self._save_safely(lambda: save_state(
+            self.tv_root, self.tv_episodes, self.tv_kind.get(), self.tv_state))
+        self.show_faces()
+
+    def _tv_choose_face(self, index):
+        self.selection = index
+        if self.tv_state.get("selected") != index:
+            self.tv_state["selected"] = index
+            self.tv_state["clips"] = {}
+            self._save_safely(lambda: save_state(
+                self.tv_root, self.tv_episodes, self.tv_kind.get(), self.tv_state))
+        self._tv_scan()
+
+    def _tv_scan(self):
+        kind = self.tv_kind.get()
+        group = self.groups[self.selection] if kind == "live" else None
+        refs = list(self.animation_refs) if kind == "animated" else None
+        if all(episode.label in self.tv_state.get("clips", {}) for episode in self.tv_episodes):
+            self._tv_scanned(self.tv_state)
+            self.status.configure(text="Loaded saved TV show scan")
+            return
+        self._job(
+            lambda cancel, progress: scan_episodes(
+                self.tv_root, self.tv_episodes, kind, self.tv_state,
+                cancel, progress, group=group, references=refs),
+            self._tv_scanned, "Finding TV scenes",
+            "Searching each episode in order. Completed episodes are saved automatically.")
+
+    def _tv_scanned(self, state):
+        self.tv_state = state
+        self.tv_entries = selected_entries(self.tv_episodes, state)
+        self.clips = [clip for _, clip in self.tv_entries]
+        self.tv_page_index = 0
+        self.show_clips()
+
+    def _tv_save_selection(self):
+        rows = {episode.label: [] for episode in self.tv_episodes}
+        for episode, clip in self.tv_entries:
+            rows[episode.label].append({
+                "start": clip.start, "end": clip.end, "keep": clip.keep})
+        self.tv_state["clips"] = rows
+        self._save_safely(lambda: save_state(
+            self.tv_root, self.tv_episodes, self.tv_kind.get(), self.tv_state))
+
+    def _tv_export(self):
+        if not any(clip.keep for clip in self.clips):
+            messagebox.showinfo("Select clips", "Select at least one clip to export.")
+            return
+        folder = filedialog.askdirectory(title="Where should your TV scenepack go?")
+        if not folder:
+            return
+        self._job(lambda cancel, progress: export_tv(
+            self.tv_root, self.tv_episodes, self.tv_state, folder,
+            self.make_zip.get(), cancel, progress), self._exported,
+            "Exporting TV scenepack", "Saving individual clips, season videos, and the full scenepack.")
+
     def _show_processing(self, title, description):
         """Replace the previous action screen so scans cannot be started twice."""
         self.page = "processing"
